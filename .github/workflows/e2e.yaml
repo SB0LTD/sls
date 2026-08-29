@@ -1,0 +1,65 @@
+name: E2E
+
+# Proves the built sls language server actually runs and speaks LSP correctly
+# on every supported OS by driving the real binary through a full session.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: LSP session (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout sls
+        uses: actions/checkout@v4
+        with:
+          path: sls
+
+      - name: Checkout zpm (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: SB0LTD/zpm
+          path: zpm
+
+      - name: Install latest Sig
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            Linux)   asset="sig-x86_64-linux.tar.xz";   unpack="tar -xf" ;;
+            macOS)   asset="sig-aarch64-macos.tar.xz";  unpack="tar -xf" ;;
+            Windows) asset="sig-x86_64-windows.zip";    unpack="unzip -q" ;;
+          esac
+          URL="https://github.com/SB0LTD/sig/releases/latest/download/$asset"
+          echo "Downloading $URL"
+          curl -fSL "$URL" -o "sigdl"
+          mkdir -p sig-dist
+          if [ "${{ runner.os }}" = "Windows" ]; then unzip -q sigdl -d sig-dist; else tar -xf sigdl -C sig-dist; fi
+          SIG_BIN="$(find "$PWD/sig-dist" -type f \( -name sig -o -name sig.exe \) | head -n1)"
+          if [ -z "$SIG_BIN" ]; then echo "sig binary not found"; exit 1; fi
+          chmod +x "$SIG_BIN" || true
+          echo "$(dirname "$SIG_BIN")" >> "$GITHUB_PATH"
+          "$SIG_BIN" version
+
+      - name: Build sls (ReleaseFast)
+        working-directory: sls
+        shell: bash
+        run: sig build -Doptimize=ReleaseFast
+
+      - name: Drive a full LSP session and assert responses
+        working-directory: sls
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/e2e.ps1

@@ -158,3 +158,67 @@ test "writeHeader formats content-length" {
     const h = try writeHeader(&buf, 123);
     try std.testing.expectEqualStrings("Content-Length: 123\r\n\r\n", h);
 }
+
+test "readFrame on empty input is incomplete" {
+    try std.testing.expectError(error.Incomplete, readFrame(""));
+    try std.testing.expectError(error.Incomplete, readFrame("Content-Length: 5\r\n"));
+}
+
+test "readFrame reports MissingContentLength when header lacks the field" {
+    const input = "X-Other: 1\r\n\r\n{}";
+    try std.testing.expectError(error.MissingContentLength, readFrame(input));
+}
+
+test "readFrame tolerates extra headers before content-length" {
+    const input = "Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n" ++
+        "Content-Length: 2\r\n\r\n{}";
+    const frame = try readFrame(input);
+    try std.testing.expectEqualStrings("{}", frame.body);
+}
+
+test "readFrame handles content-length with tabs and trailing spaces" {
+    const input = "Content-Length:\t7 \r\n\r\n{\"a\":1}";
+    const frame = try readFrame(input);
+    try std.testing.expectEqualStrings("{\"a\":1}", frame.body);
+}
+
+test "incremental framing: draining multiple messages from one buffer" {
+    // Two complete frames back to back; readFrame + advance should yield both.
+    // Body {"method":"ping"} is 17 bytes.
+    const a = "Content-Length: 2\r\n\r\n{}";
+    const b = "Content-Length: 17\r\n\r\n{\"method\":\"ping\"}";
+    const combined = a ++ b;
+
+    var cursor: usize = 0;
+    const f1 = try readFrame(combined[cursor..]);
+    try std.testing.expectEqualStrings("{}", f1.body);
+    cursor += f1.consumed;
+
+    const f2 = try readFrame(combined[cursor..]);
+    try std.testing.expectEqualStrings("{\"method\":\"ping\"}", f2.body);
+    cursor += f2.consumed;
+
+    try std.testing.expectEqual(combined.len, cursor);
+    try std.testing.expectError(error.Incomplete, readFrame(combined[cursor..]));
+}
+
+test "incremental framing: a frame split across two reads completes on the second" {
+    const full = "Content-Length: 17\r\n\r\n{\"method\":\"ping\"}";
+    // A prefix that lacks the last few body bytes is incomplete.
+    const partial = full[0 .. full.len - 3];
+    try std.testing.expectError(error.Incomplete, readFrame(partial));
+    // Once the rest arrives, the whole frame parses.
+    const frame = try readFrame(full);
+    try std.testing.expectEqualStrings("{\"method\":\"ping\"}", frame.body);
+}
+
+test "parse handles id 0 as a present request id" {
+    const msg = parse("{\"id\":0,\"method\":\"shutdown\"}");
+    try std.testing.expect(msg.id_present);
+    try std.testing.expectEqual(@as(i64, 0), msg.id);
+}
+
+test "parse of body without method yields empty method" {
+    const msg = parse("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}");
+    try std.testing.expectEqualStrings("", msg.method);
+}

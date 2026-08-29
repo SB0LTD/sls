@@ -4,6 +4,28 @@ All notable changes to sls are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and sls aims to follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4] - 2026-08-29 — Verified everywhere
+
+### Added
+- **Cross-platform end-to-end verification.** `scripts/e2e.ps1` is a portable
+  (PowerShell Core) driver that spawns the real built server, runs a full LSP
+  session over stdio (`initialize → didOpen → documentSymbol → didChange →
+  documentSymbol → didClose → shutdown → exit`), parses the `Content-Length`
+  framing, and strictly asserts every response — including that `didChange`
+  full-sync is reflected in a subsequent `documentSymbol`.
+- **E2E CI matrix.** A new `E2E` workflow runs the driver against the
+  release-built binary on **Windows, Linux, and macOS**, proving the server
+  actually runs and speaks LSP on every supported OS, not just that it compiles.
+- **Deeper protocol unit tests.** Framing edge cases (empty input, partial
+  frames, multiple messages in one buffer, extra headers, tabs/trailing spaces,
+  missing `Content-Length`, `id: 0`), and server behaviours (`didClose`,
+  full lifecycle sequence, multi-line symbol ranges, tolerance of requests
+  before `initialize`).
+
+### Changed
+- Replaced the Windows-only `scripts/handshake.ps1` with the cross-platform
+  `scripts/e2e.ps1`.
+
 ## [0.0.3] - 2026-08-29 — SB0 native
 
 ### Added
@@ -74,6 +96,7 @@ All notable changes to sls are documented here. The format is based on
   zpm by path dependency.
 - MIT licensed, with the upstream ZLS copyright preserved.
 
+[0.0.4]: https://github.com/SB0LTD/sls/releases/tag/v0.0.4
 [0.0.3]: https://github.com/SB0LTD/sls/releases/tag/v0.0.3
 [0.0.2]: https://github.com/SB0LTD/sls/releases/tag/v0.0.2
 [0.0.1]: https://github.com/SB0LTD/sls/releases/tag/v0.0.1

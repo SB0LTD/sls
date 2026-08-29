@@ -142,12 +142,13 @@ that follows the SB0 process-entry contract (`x0 = *BootHandoffBlock`,
 
 ## Try it — a real LSP session
 
-`scripts/handshake.ps1` drives the server through a full session over stdio and
-verifies the responses:
+`scripts/e2e.ps1` is a cross-platform ([PowerShell Core](https://github.com/PowerShell/PowerShell))
+driver that spawns the built server, runs a full LSP session over stdio, parses
+the `Content-Length` framing, and strictly asserts every response:
 
-```powershell
+```sh
 sig build
-pwsh scripts/handshake.ps1
+pwsh scripts/e2e.ps1
 ```
 
 It opens a document and asks for its symbols. Given this source:
@@ -206,7 +207,8 @@ sls/
 ├── build.sig            # native sig_build graph; wires zpm by path
 ├── build.sig.zon        # manifest — declares the ../zpm path dependency
 ├── scripts/
-│   └── handshake.ps1    # end-to-end LSP session driver
+│   ├── e2e.ps1          # cross-platform end-to-end LSP session driver
+│   └── build-sb0.sh     # SB0X native image build
 └── src/
     ├── main.sig             # transport loop — the sole I/O site
     ├── platform/
@@ -235,6 +237,23 @@ Every module in `src/` honors the same rules:
 - One job per module — the parser does not do I/O; the drawer of bytes does not
   parse; pure logic lives in `core/`.
 - Every module with logic carries inline `test` blocks, run by `sig build test`.
+
+## Verification
+
+sls is verified at two levels, and both run in CI:
+
+- **Unit tests** (`sig build test`) — allocator-free `test` blocks across every
+  module: document store, position/offset math, the symbol scanner, the JSON
+  writer, LSP framing (partial frames, multiple messages in one buffer,
+  case-insensitive and whitespace-tolerant headers, missing `Content-Length`),
+  and the full server dispatch (lifecycle, document sync, `documentSymbol`,
+  unknown-method errors, JSON-escape decoding).
+- **End-to-end** (`scripts/e2e.ps1`) — spawns the *actual built binary*, drives
+  a complete `initialize → didOpen → documentSymbol → didChange → documentSymbol
+  → didClose → shutdown → exit` session over stdio, parses the framing, and
+  asserts every response. The [E2E workflow](.github/workflows/e2e.yaml) runs
+  this on **Windows, Linux, and macOS** runners, so each release is proven to
+  actually run and speak LSP on every supported OS — not merely to compile.
 
 ## Changelog
 

@@ -18,7 +18,7 @@
 //! build is a native "hello, I am sls" image proving the toolchain path works
 //! end to end on our own OS.
 
-const build_version = "0.0.3";
+const build_version = "0.0.4";
 
 // SB0 operation codes (x8 on `svc #0`) — see sb0s/src/common/types.sig.
 const OP_PROCESS_EXIT: u16 = 0x0000;

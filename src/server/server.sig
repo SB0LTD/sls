@@ -15,7 +15,7 @@ const position = @import("position");
 const symbols = @import("symbols");
 
 pub const SERVER_NAME = "sls";
-pub const SERVER_VERSION = "0.0.3";
+pub const SERVER_VERSION = "0.0.4";
 
 /// The outcome of handling one message.
 pub const Outcome = enum {
@@ -550,6 +550,91 @@ test "documentSymbol on unknown document returns empty array" {
     const res = srv.handle(message.parse(
         "{\"id\":3,\"method\":\"textDocument/documentSymbol\",\"params\":{" ++
             "\"textDocument\":{\"uri\":\"file:///missing.sig\"}}}",
+    ), &out);
+    try std.testing.expectEqual(Outcome.respond, res.outcome);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"result\":[]") != null);
+}
+
+test "didClose removes the document from the store" {
+    const srv = &test_srv;
+    srv.* = .{};
+    var out: [4096]u8 = undefined;
+    _ = srv.handle(message.parse(
+        "{\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{" ++
+            "\"uri\":\"file:///x.sig\",\"version\":1,\"text\":\"pub fn a() void {}\"}}}",
+    ), &out);
+    try std.testing.expectEqual(@as(usize, 1), srv.store.count());
+
+    const close_res = srv.handle(message.parse(
+        "{\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{" ++
+            "\"uri\":\"file:///x.sig\"}}}",
+    ), &out);
+    try std.testing.expectEqual(Outcome.none, close_res.outcome);
+    try std.testing.expectEqual(@as(usize, 0), srv.store.count());
+
+    // documentSymbol on the now-closed doc yields an empty array, not a crash.
+    const ds = srv.handle(message.parse(
+        "{\"id\":1,\"method\":\"textDocument/documentSymbol\",\"params\":{" ++
+            "\"textDocument\":{\"uri\":\"file:///x.sig\"}}}",
+    ), &out);
+    try std.testing.expect(std.mem.indexOf(u8, ds.body, "\"result\":[]") != null);
+}
+
+test "full lifecycle: initialize through exit in sequence" {
+    const srv = &test_srv;
+    srv.* = .{};
+    var out: [8192]u8 = undefined;
+
+    const steps = [_]struct { body: []const u8, expect: Outcome }{
+        .{ .body = "{\"id\":1,\"method\":\"initialize\"}", .expect = .respond },
+        .{ .body = "{\"method\":\"initialized\"}", .expect = .none },
+        .{ .body = "{\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///l.sig\",\"version\":1,\"text\":\"pub fn f() void {}\"}}}", .expect = .none },
+        .{ .body = "{\"id\":2,\"method\":\"textDocument/documentSymbol\",\"params\":{\"textDocument\":{\"uri\":\"file:///l.sig\"}}}", .expect = .respond },
+        .{ .body = "{\"id\":3,\"method\":\"shutdown\"}", .expect = .respond },
+        .{ .body = "{\"method\":\"exit\"}", .expect = .exit },
+    };
+    for (steps) |step| {
+        const res = srv.handle(message.parse(step.body), &out);
+        try std.testing.expectEqual(step.expect, res.outcome);
+        // Every response must carry the JSON-RPC envelope.
+        if (res.outcome == .respond) {
+            try std.testing.expect(std.mem.indexOf(u8, res.body, "\"jsonrpc\":\"2.0\"") != null);
+        }
+    }
+    try std.testing.expect(srv.initialized and srv.shutdown_requested);
+}
+
+test "documentSymbol emits well-formed ranges for a multi-line document" {
+    const srv = &test_srv;
+    srv.* = .{};
+    var out: [8192]u8 = undefined;
+    // Line 0: const a; line 1: fn b; line 2: struct C.
+    _ = srv.handle(message.parse(
+        "{\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{" ++
+            "\"uri\":\"file:///r.sig\",\"version\":1," ++
+            "\"text\":\"const a = 1;\\npub fn b() void {}\\npub const C = struct {};\"}}}",
+    ), &out);
+    const ds = srv.handle(message.parse(
+        "{\"id\":1,\"method\":\"textDocument/documentSymbol\",\"params\":{" ++
+            "\"textDocument\":{\"uri\":\"file:///r.sig\"}}}",
+    ), &out);
+    // a on line 0, b on line 1, C on line 2.
+    try std.testing.expect(std.mem.indexOf(u8, ds.body, "\"name\":\"a\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ds.body, "\"name\":\"b\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ds.body, "\"name\":\"C\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ds.body, "\"line\":2") != null);
+    // Response is a JSON array result.
+    try std.testing.expect(std.mem.indexOf(u8, ds.body, "\"result\":[") != null);
+}
+
+test "requests before initialize still get answered (server is tolerant)" {
+    const srv = &test_srv;
+    srv.* = .{};
+    var out: [4096]u8 = undefined;
+    // A documentSymbol before initialize/ didOpen: empty array, no crash.
+    const res = srv.handle(message.parse(
+        "{\"id\":1,\"method\":\"textDocument/documentSymbol\",\"params\":{" ++
+            "\"textDocument\":{\"uri\":\"file:///none.sig\"}}}",
     ), &out);
     try std.testing.expectEqual(Outcome.respond, res.outcome);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "\"result\":[]") != null);
