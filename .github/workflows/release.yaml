@@ -60,12 +60,21 @@ jobs:
           "sig_version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Using $ver"
 
-      - name: Build (ReleaseFast) and test
+      - name: Test
         working-directory: sls
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           sig build test
+          if ($LASTEXITCODE -ne 0) { throw "sig build test failed with exit code $LASTEXITCODE" }
+
+      - name: Build (ReleaseFast)
+        working-directory: sls
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
           sig build -Doptimize=ReleaseFast
+          if ($LASTEXITCODE -ne 0) { throw "sig build failed with exit code $LASTEXITCODE" }
           if (-not (Test-Path "sig-out/bin/sls.exe")) { throw "sls.exe was not produced" }
 
       - name: Package artifact

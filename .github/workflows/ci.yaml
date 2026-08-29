@@ -47,8 +47,16 @@ jobs:
 
       - name: sig build
         working-directory: sls
-        run: sig build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          sig build
+          if ($LASTEXITCODE -ne 0) { throw "sig build failed with exit code $LASTEXITCODE" }
 
       - name: sig build test
         working-directory: sls
-        run: sig build test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          sig build test
+          if ($LASTEXITCODE -ne 0) { throw "sig build test failed with exit code $LASTEXITCODE" }
