@@ -27,6 +27,7 @@ const p_position = "src/core/position.sig";
 const p_symbols = "src/core/symbols.sig";
 const p_jwrite = "src/lsp/jwrite.sig";
 const p_message = "src/lsp/message.sig";
+const p_loop = "src/lsp/loop.sig";
 const p_stdio = "src/platform/stdio.sig";
 const p_server = "src/server/server.sig";
 
@@ -69,6 +70,7 @@ const app_imports = [_]sig_build.Import_Entry{
     importEntry("symbols", p_symbols),
     importEntry("stdio", p_stdio),
     importEntry("server", p_server),
+    importEntry("loop", p_loop),
 };
 
 fn runApp(ctx: *sig_build.Step_Context) sig_build.SigError!void {
@@ -116,6 +118,16 @@ pub fn build(ctx: *sig_build.Build_Context) !void {
     try wire(ctx, server, "document", p_document);
     try wire(ctx, server, "position", p_position);
     try wire(ctx, server, "symbols", p_symbols);
+
+    // The shared transport loop depends on message + server.
+    const loop_mod = try ctx.addModule("loop", p_loop);
+    try wire(ctx, loop_mod, "message", p_message);
+    try wire(ctx, loop_mod, "server", p_server);
+    try wire(ctx, loop_mod, "json", zpm_json);
+    try wire(ctx, loop_mod, "jwrite", p_jwrite);
+    try wire(ctx, loop_mod, "document", p_document);
+    try wire(ctx, loop_mod, "position", p_position);
+    try wire(ctx, loop_mod, "symbols", p_symbols);
 
     // The application executable — root module src/main.sig with the full
     // transitive import closure registered by name.
