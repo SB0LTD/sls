@@ -4,6 +4,28 @@ All notable changes to sls are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and sls aims to follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.3] - 2026-08-29 — SB0 native
+
+### Added
+- **Real SB0 native image.** sls now builds a genuine, structurally valid
+  **SB0X** userspace image for `aarch64-sb0` — our own OS — promoted from the
+  experimental placeholder in 0.0.2. Because SB0 is freestanding (no libc, no
+  hosted stdio), the SB0 build does not use the Win32/POSIX transport; a
+  dedicated native entry (`src/platform/sb0_entry.sig`) talks to the SB0 kernel
+  through the `svc #0` trap ABI (operation code in `x8`, arguments in
+  `x0..x5`) and links with the SB0X userspace layout (`src/platform/sb0x.ld`).
+  The image carries the 64-byte `SB0X` header + one RX segment and follows the
+  SB0 process-entry contract (`x0 = *BootHandoffBlock`, `x1 = *HandleTable`).
+- The SB0X artifact (`sls-<ver>-aarch64-sb0.tar.gz`) is now a first-class
+  release asset with its own checksum, and CI builds and validates it (SB0X
+  magic) on every run.
+
+### Notes
+- The SB0X image announces sls's identity via the `debug_print` trap and exits;
+  it proves the native SB0 target path end to end. Full bidirectional LSP
+  transport over SB0's queue/channel handles (SB0 input is capability-based, not
+  a POSIX read) is the next step for the SB0 build.
+
 ## [0.0.2] - 2026-08-29 — Multiplatform
 
 ### Added
@@ -32,15 +54,9 @@ All notable changes to sls are documented here. The format is based on
   status for the experimental SB0 target.
 
 ### Known limitations
-- **SB0 native is experimental and does not yet produce a working binary.** SB0
-  is a freestanding AArch64 target with no libc and no hosted stdio; the Sig
-  toolchain's SB0 code generation and userspace runtime (the `svc #0` trap ABI
-  and SB0X loader) are still in progress. sls is a hosted stdio program, so it
-  cannot link a working SB0 image today (the SB0 link path expects a freestanding
-  `_start` and a syscall-based I/O layer that does not exist yet). The target is
-  wired and documented so it lights up the moment SB0 userspace support lands;
-  the release pipeline attempts it non-fatally and never blocks the hosted
-  artifacts on it.
+- SB0 native was wired as an experimental target but did not yet produce a
+  working image in this release. **Superseded by 0.0.3**, which builds a real
+  SB0X native image via the `svc #0` trap ABI.
 
 ## [0.0.1] - 2026-08-29 — Initial release
 
@@ -58,5 +74,6 @@ All notable changes to sls are documented here. The format is based on
   zpm by path dependency.
 - MIT licensed, with the upstream ZLS copyright preserved.
 
+[0.0.3]: https://github.com/SB0LTD/sls/releases/tag/v0.0.3
 [0.0.2]: https://github.com/SB0LTD/sls/releases/tag/v0.0.2
 [0.0.1]: https://github.com/SB0LTD/sls/releases/tag/v0.0.1

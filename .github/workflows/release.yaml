@@ -113,29 +113,24 @@ jobs:
             echo "::endgroup::"
           done
 
+          # SB0 native — our own OS. A dedicated SB0X userspace image built via
+          # the SB0 svc #0 trap ABI (see scripts/build-sb0.sh). Packaged as a
+          # first-class artifact alongside the hosted targets.
+          echo "::group::build aarch64-sb0 (SB0X native)"
+          rm -rf sig-out
+          bash scripts/build-sb0.sh "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0x"
+          sb0_stage="sls-$VERSION-aarch64-sb0"
+          mkdir -p "$sb0_stage"
+          cp "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0x" "$sb0_stage/sls.sb0x"
+          cp README.md LICENSE NOTICE "$sb0_stage/"
+          tar -czf "$OUT/$sb0_stage.tar.gz" -C "$sb0_stage" .
+          rm -rf "$sb0_stage"
+          echo "::endgroup::"
+
           cd "$OUT"
           sha256sum * > SHA256SUMS.txt
           echo "Artifacts:"; ls -la
           echo "dist=$OUT" >> "$GITHUB_OUTPUT"
-
-      # SB0 native is experimental and not yet buildable end-to-end (see README).
-      # Attempt it best-effort so the target stays exercised, but never fail the
-      # release or block the hosted artifacts on it.
-      - name: Build SB0 native (experimental, non-fatal)
-        continue-on-error: true
-        working-directory: sls
-        run: |
-          set -uo pipefail
-          VERSION="${{ steps.meta.outputs.version }}"
-          OUT="$GITHUB_WORKSPACE/dist"
-          bash scripts/build-sb0.sh "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0x" || true
-          if [ -f "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0x" ]; then
-            cp "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0x" "$OUT/"
-            (cd "$OUT" && sha256sum "sls-$VERSION-aarch64-sb0.sb0x" >> SHA256SUMS.txt)
-            echo "SB0 native artifact attached."
-          else
-            echo "SB0 native artifact not produced (expected while SB0 codegen is WIP)."
-          fi
 
       - name: Publish GitHub Release
         env:
@@ -166,6 +161,7 @@ jobs:
           | Linux aarch64   | \`sls-$VERSION-aarch64-linux.tar.gz\` |
           | macOS x86_64    | \`sls-$VERSION-x86_64-macos.tar.gz\`  |
           | macOS aarch64   | \`sls-$VERSION-aarch64-macos.tar.gz\` |
+          | **SB0 native**  | \`sls-$VERSION-aarch64-sb0.tar.gz\` (SB0X image) |
 
           ### Install
           Extract the archive for your platform and point your LSP-capable editor at

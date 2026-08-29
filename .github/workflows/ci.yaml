@@ -67,9 +67,7 @@ jobs:
             echo "::endgroup::"
           done
 
-      # SB0 native is experimental; exercise the target best-effort without
-      # failing CI (see README "Platforms").
-      - name: SB0 native (experimental, non-fatal)
-        continue-on-error: true
+      # SB0 native — build the SB0X userspace image and verify its magic.
+      - name: SB0 native (SB0X image)
         working-directory: sls
-        run: bash scripts/build-sb0.sh sig-out/bin/sls-aarch64-sb0.sb0x || true
+        run: bash scripts/build-sb0.sh sig-out/bin/sls-aarch64-sb0.sb0x

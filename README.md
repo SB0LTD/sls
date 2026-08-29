@@ -120,17 +120,25 @@ page.
 | Linux aarch64   | `aarch64-linux-gnu`| `sls-<ver>-aarch64-linux.tar.gz` | ✅ supported |
 | macOS x86_64    | `x86_64-macos`     | `sls-<ver>-x86_64-macos.tar.gz`  | ✅ supported |
 | macOS aarch64   | `aarch64-macos`    | `sls-<ver>-aarch64-macos.tar.gz` | ✅ supported |
-| **SB0 native**  | `aarch64-sb0`      | `sls-<ver>-aarch64-sb0.sb0x`     | 🧪 experimental |
+| **SB0 native**  | `aarch64-sb0`      | `sls-<ver>-aarch64-sb0.tar.gz` (SB0X) | ✅ native image |
 
-> [!WARNING]
-> **SB0 native is experimental and not yet buildable end-to-end.** SB0 is a
-> freestanding AArch64 target with no libc and no hosted stdio; the Sig
-> toolchain's SB0 code generation and userspace runtime (the `svc #0` trap ABI
-> and SB0X loader) are still in progress. sls is a hosted stdio program, so it
-> cannot yet link a working SB0 image — the target is wired
-> (`src/platform/sb0_native.ld`, `scripts/build-sb0.sh`) and documented so it
-> becomes real the moment SB0 userspace support lands. The release pipeline
-> attempts it best-effort and never blocks the hosted artifacts on it.
+### SB0 native
+
+sls builds a real native image for [SB0](https://github.com/SB0LTD/sig) — our
+own operating system. SB0 is a freestanding AArch64 target with no libc and no
+hosted stdio, so the SB0 build does not use the Win32/POSIX transport. Instead a
+dedicated native entry (`src/platform/sb0_entry.sig`) talks to the SB0 kernel
+through the `svc #0` trap ABI (operation code in `x8`, arguments in `x0..x5`) and
+links with the SB0X userspace layout (`src/platform/sb0x.ld`). The output is a
+structurally valid **SB0X** image (a 64-byte `SB0X` header plus one RX segment)
+that follows the SB0 process-entry contract (`x0 = *BootHandoffBlock`,
+`x1 = *HandleTable`).
+
+> [!NOTE]
+> The SB0X image currently announces sls's identity via the `debug_print` trap
+> and exits — it proves the native SB0 target path end to end. The full
+> bidirectional LSP transport over SB0's queue/channel handles (SB0 input is
+> capability-based, not a POSIX read) is the next step for the SB0 build.
 
 ## Try it — a real LSP session
 
@@ -203,7 +211,8 @@ sls/
     ├── main.sig             # transport loop — the sole I/O site
     ├── platform/
     │   ├── stdio.sig         # blocking stdio: Win32 + POSIX backends
-    │   └── sb0_native.ld     # SB0K linker script (experimental target)
+    │   ├── sb0_entry.sig     # SB0 native entry (svc #0 trap ABI)
+    │   └── sb0x.ld           # SB0X userspace image linker script
     ├── lsp/
     │   ├── message.sig      # Content-Length framing + JSON-RPC parsing
     │   └── jwrite.sig       # allocator-free JSON writer
