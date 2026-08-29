@@ -428,8 +428,14 @@ fn readStringAfter(body: []const u8, from: usize) ?[]const u8 {
 
 // ── tests ─────────────────────────────────────────────────────────────────
 
+// The Server embeds the (large, fixed-capacity) document store plus a decode
+// scratch buffer. Tests use a static instance and reset it per test, rather
+// than a stack local, so they never depend on the test thread's stack size.
+var test_srv: Server = .{};
+
 test "initialize advertises capabilities and serverInfo" {
-    var srv: Server = .{};
+    const srv = &test_srv;
+    srv.* = .{};
     const msg = message.parse("{\"id\":1,\"method\":\"initialize\"}");
     var out: [4096]u8 = undefined;
     const res = srv.handle(msg, &out);
@@ -441,7 +447,8 @@ test "initialize advertises capabilities and serverInfo" {
 }
 
 test "shutdown then exit" {
-    var srv: Server = .{};
+    const srv = &test_srv;
+    srv.* = .{};
     var out: [1024]u8 = undefined;
     const sd = srv.handle(message.parse("{\"id\":2,\"method\":\"shutdown\"}"), &out);
     try std.testing.expectEqual(Outcome.respond, sd.outcome);
@@ -453,7 +460,8 @@ test "shutdown then exit" {
 }
 
 test "unknown request yields MethodNotFound, unknown notification ignored" {
-    var srv: Server = .{};
+    const srv = &test_srv;
+    srv.* = .{};
     var out: [1024]u8 = undefined;
     const req = srv.handle(message.parse("{\"id\":9,\"method\":\"textDocument/nope\"}"), &out);
     try std.testing.expectEqual(Outcome.respond, req.outcome);
@@ -464,7 +472,8 @@ test "unknown request yields MethodNotFound, unknown notification ignored" {
 }
 
 test "didOpen stores document, documentSymbol returns outline" {
-    var srv: Server = .{};
+    const srv = &test_srv;
+    srv.* = .{};
     var out: [8192]u8 = undefined;
 
     const open_body =
@@ -485,7 +494,8 @@ test "didOpen stores document, documentSymbol returns outline" {
 }
 
 test "didChange full sync updates text" {
-    var srv: Server = .{};
+    const srv = &test_srv;
+    srv.* = .{};
     var out: [8192]u8 = undefined;
     _ = srv.handle(message.parse(
         "{\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{" ++
@@ -510,7 +520,8 @@ test "unescapeJson decodes standard escapes and \\uXXXX" {
 }
 
 test "didOpen with escaped source yields all symbols" {
-    var srv: Server = .{};
+    const srv = &test_srv;
+    srv.* = .{};
     var out: [8192]u8 = undefined;
     // Text as it arrives on the wire: escaped quotes and \n newlines.
     const open_body =
@@ -533,7 +544,8 @@ test "didOpen with escaped source yields all symbols" {
 }
 
 test "documentSymbol on unknown document returns empty array" {
-    var srv: Server = .{};
+    const srv = &test_srv;
+    srv.* = .{};
     var out: [1024]u8 = undefined;
     const res = srv.handle(message.parse(
         "{\"id\":3,\"method\":\"textDocument/documentSymbol\",\"params\":{" ++

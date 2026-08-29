@@ -86,7 +86,8 @@ test "transport modules compile and link" {
     const msg = message.parse("{\"id\":1,\"method\":\"initialize\"}");
     try std.testing.expectEqualStrings("initialize", msg.method);
     var out: [4096]u8 = undefined;
-    var srv: server_mod.Server = .{};
-    const res = srv.handle(msg, &out);
+    // Reuse the module-level server (large fixed store) to avoid a stack local.
+    server_state = .{};
+    const res = server_state.handle(msg, &out);
     try std.testing.expectEqual(server_mod.Outcome.respond, res.outcome);
 }

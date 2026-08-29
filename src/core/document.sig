@@ -7,11 +7,11 @@
 const std = @import("std");
 
 /// Maximum number of documents open at once.
-pub const MAX_DOCUMENTS = 64;
+pub const MAX_DOCUMENTS = 32;
 /// Maximum URI byte length (file:// URIs are typically well under this).
 pub const MAX_URI = 1024;
-/// Maximum document text size held in a slot (256 KiB).
-pub const MAX_TEXT = 256 * 1024;
+/// Maximum document text size held in a slot (128 KiB).
+pub const MAX_TEXT = 128 * 1024;
 
 pub const Document = struct {
     uri_buf: [MAX_URI]u8 = undefined,
@@ -105,8 +105,14 @@ pub const Store = struct {
     }
 };
 
+// Test instances live in static storage, not on the test thread's stack: the
+// Store holds many large fixed slots, and a stack local would overflow smaller
+// default test stacks. This mirrors how the server owns the store as a global.
+var test_store: Store = .{};
+
 test "open, get, replace, close roundtrip" {
-    var store: Store = .{};
+    const store = &test_store;
+    store.* = .{};
     try std.testing.expectEqual(@as(usize, 0), store.count());
 
     const doc = try store.open("file:///a.sig", "pub fn main() void {}", 1);
@@ -129,7 +135,8 @@ test "open, get, replace, close roundtrip" {
 }
 
 test "open replaces existing slot rather than duplicating" {
-    var store: Store = .{};
+    const store = &test_store;
+    store.* = .{};
     _ = try store.open("file:///a.sig", "one", 1);
     _ = try store.open("file:///a.sig", "two", 2);
     try std.testing.expectEqual(@as(usize, 1), store.count());
@@ -137,7 +144,8 @@ test "open replaces existing slot rather than duplicating" {
 }
 
 test "store enforces capacity and length bounds" {
-    var store: Store = .{};
+    const store = &test_store;
+    store.* = .{};
     var uri_buf: [MAX_URI + 1]u8 = undefined;
     @memset(&uri_buf, 'x');
     try std.testing.expectError(error.UriTooLong, store.open(&uri_buf, "", 1));
