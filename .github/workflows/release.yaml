@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v0.0.1)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: windows-latest
+    steps:
+      - name: Resolve tag
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ github.event.inputs.tag }}" } else { "${{ github.ref_name }}" }
+          $version = $tag -replace '^v', ''
+          "tag=$tag"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building release $tag (version $version)"
+
+      - name: Checkout sls
+        uses: actions/checkout@v4
+        with:
+          path: sls
+          ref: ${{ steps.meta.outputs.tag }}
+
+      - name: Checkout zpm (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: SB0LTD/zpm
+          path: zpm
+
+      - name: Install latest Sig
+        id: sig
+        shell: pwsh
+        run: |
+          $url = "https://github.com/SB0LTD/sig/releases/latest/download/sig-x86_64-windows.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile sig.zip
+          Expand-Archive -Path sig.zip -DestinationPath sig-dist -Force
+          $bin = Get-ChildItem -Path sig-dist -Recurse -Filter sig.exe | Select-Object -First 1
+          if (-not $bin) { throw "sig.exe not found in the downloaded archive" }
+          $binDir = Split-Path $bin.FullName
+          "$binDir" | Out-File -FilePath $env:GITHUB_PATH -Append
+          $ver = (& $bin.FullName version)
+          "sig_version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Using $ver"
+
+      - name: Build (ReleaseFast) and test
+        working-directory: sls
+        shell: pwsh
+        run: |
+          sig build test
+          sig build -Doptimize=ReleaseFast
+          if (-not (Test-Path "sig-out/bin/sls.exe")) { throw "sls.exe was not produced" }
+
+      - name: Package artifact
+        id: package
+        working-directory: sls
+        shell: pwsh
+        run: |
+          $version = "${{ steps.meta.outputs.version }}"
+          $stage = "sls-$version-x86_64-windows"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item "sig-out/bin/sls.exe" "$stage/"
+          Copy-Item "README.md","LICENSE","NOTICE" "$stage/"
+          $zip = "$stage.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $zip" | Out-File -FilePath "$zip.sha256" -Encoding ascii
+          Write-Host "Packaged $zip ($hash)"
+          "artifact=$zip"        | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "checksum=$zip.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Publish GitHub Release
+        working-directory: sls
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $version = "${{ steps.meta.outputs.version }}"
+          $sig = "${{ steps.sig.outputs.sig_version }}"
+          $notes = @"
+          ## sls $tag
+
+          The Sig Language Server — a native, allocator-free LSP implementation for Sig,
+          built on [zpm](https://github.com/SB0LTD/zpm). sls is a fork of
+          [zigtools/zls](https://github.com/zigtools/zls) (MIT), rewritten for Sig.
+
+          **Built with:** $sig
+
+          ### Install
+          1. Download and extract ``sls-$version-x86_64-windows.zip``.
+          2. Point your LSP-capable editor at ``sls.exe`` for the ``sig`` language.
+
+          ### Verify
+          Compare the archive's SHA-256 against the published ``.sha256`` file.
+
+          See the [README](https://github.com/${{ github.repository }}/blob/$tag/README.md)
+          for editor setup and the feature matrix.
+          "@
+          # Create the release if it does not yet exist, then upload assets.
+          if (-not (gh release view $tag 2>$null)) {
+            gh release create $tag `
+              --title "sls $tag" `
+              --notes "$notes" `
+              "${{ steps.package.outputs.artifact }}" `
+              "${{ steps.package.outputs.checksum }}"
+          } else {
+            gh release upload $tag `
+              "${{ steps.package.outputs.artifact }}" `
+              "${{ steps.package.outputs.checksum }}" --clobber
+          }

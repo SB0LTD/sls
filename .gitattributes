@@ -1,0 +1,9 @@
+# Normalize line endings: text files use LF in the repository.
+* text=auto eol=lf
+
+# Windows-native scripts keep CRLF.
+*.ps1 text eol=crlf
+
+# Binary assets are never munged.
+*.png binary
+*.ico binary

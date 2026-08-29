@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test (Windows, latest Sig)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout sls
+        uses: actions/checkout@v4
+        with:
+          path: sls
+
+      # zpm is a path dependency (../zpm). Check it out as a sibling so
+      # build.sig.zon resolves the same way it does locally.
+      - name: Checkout zpm (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: SB0LTD/zpm
+          path: zpm
+
+      - name: Install latest Sig
+        id: sig
+        shell: pwsh
+        run: |
+          $url = "https://github.com/SB0LTD/sig/releases/latest/download/sig-x86_64-windows.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile sig.zip
+          Expand-Archive -Path sig.zip -DestinationPath sig-dist -Force
+          # The archive extracts to sig-<version>-x86_64-windows/bin/sig.exe.
+          $bin = Get-ChildItem -Path sig-dist -Recurse -Filter sig.exe | Select-Object -First 1
+          if (-not $bin) { throw "sig.exe not found in the downloaded archive" }
+          $binDir = Split-Path $bin.FullName
+          Write-Host "Sig binary: $($bin.FullName)"
+          "$binDir" | Out-File -FilePath $env:GITHUB_PATH -Append
+          & $bin.FullName version
+
+      - name: sig build
+        working-directory: sls
+        run: sig build
+
+      - name: sig build test
+        working-directory: sls
+        run: sig build test

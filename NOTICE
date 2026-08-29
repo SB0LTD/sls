@@ -1,0 +1,19 @@
+sls — Sig Language Server
+=========================
+
+sls is a fork of ZLS (the Zig Language Server), reimagined for the Sig
+toolchain and the zpm package ecosystem.
+
+Upstream project:
+  ZLS — https://github.com/zigtools/zls
+  Copyright (c) ZLS contributors
+  Licensed under the MIT License.
+
+sls retains ZLS's architecture and Language Server Protocol semantics as its
+starting point and rewrites the implementation in Sig, following a strict
+zero-allocator, no-runtime-std-I/O design and leaning on the zpm package
+library for reusable infrastructure.
+
+Both ZLS and sls are distributed under the MIT License. The upstream copyright
+notice is preserved in LICENSE alongside the sls copyright, as the MIT License
+requires.

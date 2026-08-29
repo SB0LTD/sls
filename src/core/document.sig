@@ -1,0 +1,144 @@
+//! Layer 0 — Document store.
+//!
+//! Holds text documents opened by the LSP client. Zero allocator: a fixed pool
+//! of slots, each with a bounded URI buffer and a bounded text buffer. Lookups
+//! are linear over the small slot set. Nothing here touches I/O or transport.
+
+const std = @import("std");
+
+/// Maximum number of documents open at once.
+pub const MAX_DOCUMENTS = 64;
+/// Maximum URI byte length (file:// URIs are typically well under this).
+pub const MAX_URI = 1024;
+/// Maximum document text size held in a slot (256 KiB).
+pub const MAX_TEXT = 256 * 1024;
+
+pub const Document = struct {
+    uri_buf: [MAX_URI]u8 = undefined,
+    uri_len: usize = 0,
+    text_buf: [MAX_TEXT]u8 = undefined,
+    text_len: usize = 0,
+    version: i64 = 0,
+    in_use: bool = false,
+
+    pub fn uri(self: *const Document) []const u8 {
+        return self.uri_buf[0..self.uri_len];
+    }
+
+    pub fn text(self: *const Document) []const u8 {
+        return self.text_buf[0..self.text_len];
+    }
+};
+
+pub const StoreError = error{
+    UriTooLong,
+    TextTooLong,
+    StoreFull,
+};
+
+pub const Store = struct {
+    docs: [MAX_DOCUMENTS]Document = [_]Document{.{}} ** MAX_DOCUMENTS,
+
+    /// Find the slot index for a URI, or null if not open.
+    pub fn find(self: *Store, target: []const u8) ?usize {
+        for (&self.docs, 0..) |*doc, i| {
+            if (doc.in_use and std.mem.eql(u8, doc.uri(), target)) return i;
+        }
+        return null;
+    }
+
+    pub fn get(self: *Store, target: []const u8) ?*Document {
+        const idx = self.find(target) orelse return null;
+        return &self.docs[idx];
+    }
+
+    /// Number of currently open documents.
+    pub fn count(self: *const Store) usize {
+        var n: usize = 0;
+        for (&self.docs) |*doc| {
+            if (doc.in_use) n += 1;
+        }
+        return n;
+    }
+
+    /// Open (or replace) a document. If the URI is already open, its contents
+    /// are overwritten in place.
+    pub fn open(self: *Store, target: []const u8, contents: []const u8, version: i64) StoreError!*Document {
+        if (target.len > MAX_URI) return error.UriTooLong;
+        if (contents.len > MAX_TEXT) return error.TextTooLong;
+
+        const idx = self.find(target) orelse (self.freeSlot() orelse return error.StoreFull);
+        var doc = &self.docs[idx];
+        @memcpy(doc.uri_buf[0..target.len], target);
+        doc.uri_len = target.len;
+        @memcpy(doc.text_buf[0..contents.len], contents);
+        doc.text_len = contents.len;
+        doc.version = version;
+        doc.in_use = true;
+        return doc;
+    }
+
+    /// Replace the full text of an already-open document (didChange, full sync).
+    pub fn replace(self: *Store, target: []const u8, contents: []const u8, version: i64) StoreError!*Document {
+        if (contents.len > MAX_TEXT) return error.TextTooLong;
+        const doc = self.get(target) orelse return self.open(target, contents, version);
+        @memcpy(doc.text_buf[0..contents.len], contents);
+        doc.text_len = contents.len;
+        doc.version = version;
+        return doc;
+    }
+
+    /// Close a document, freeing its slot. Returns true if it was open.
+    pub fn close(self: *Store, target: []const u8) bool {
+        const idx = self.find(target) orelse return false;
+        self.docs[idx].in_use = false;
+        self.docs[idx].uri_len = 0;
+        self.docs[idx].text_len = 0;
+        return true;
+    }
+
+    fn freeSlot(self: *Store) ?usize {
+        for (&self.docs, 0..) |*doc, i| {
+            if (!doc.in_use) return i;
+        }
+        return null;
+    }
+};
+
+test "open, get, replace, close roundtrip" {
+    var store: Store = .{};
+    try std.testing.expectEqual(@as(usize, 0), store.count());
+
+    const doc = try store.open("file:///a.sig", "pub fn main() void {}", 1);
+    try std.testing.expectEqualStrings("file:///a.sig", doc.uri());
+    try std.testing.expectEqualStrings("pub fn main() void {}", doc.text());
+    try std.testing.expectEqual(@as(usize, 1), store.count());
+
+    const got = store.get("file:///a.sig").?;
+    try std.testing.expectEqual(@as(i64, 1), got.version);
+
+    _ = try store.replace("file:///a.sig", "const x = 1;", 2);
+    const got2 = store.get("file:///a.sig").?;
+    try std.testing.expectEqualStrings("const x = 1;", got2.text());
+    try std.testing.expectEqual(@as(i64, 2), got2.version);
+    try std.testing.expectEqual(@as(usize, 1), store.count());
+
+    try std.testing.expect(store.close("file:///a.sig"));
+    try std.testing.expectEqual(@as(usize, 0), store.count());
+    try std.testing.expect(store.get("file:///a.sig") == null);
+}
+
+test "open replaces existing slot rather than duplicating" {
+    var store: Store = .{};
+    _ = try store.open("file:///a.sig", "one", 1);
+    _ = try store.open("file:///a.sig", "two", 2);
+    try std.testing.expectEqual(@as(usize, 1), store.count());
+    try std.testing.expectEqualStrings("two", store.get("file:///a.sig").?.text());
+}
+
+test "store enforces capacity and length bounds" {
+    var store: Store = .{};
+    var uri_buf: [MAX_URI + 1]u8 = undefined;
+    @memset(&uri_buf, 'x');
+    try std.testing.expectError(error.UriTooLong, store.open(&uri_buf, "", 1));
+}
