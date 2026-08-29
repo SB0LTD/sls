@@ -13,16 +13,14 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: Build and test (Windows, latest Sig)
-    runs-on: windows-latest
+    name: Build, test, cross-compile
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout sls
         uses: actions/checkout@v4
         with:
           path: sls
 
-      # zpm is a path dependency (../zpm). Check it out as a sibling so
-      # build.sig.zon resolves the same way it does locally.
       - name: Checkout zpm (path dependency)
         uses: actions/checkout@v4
         with:
@@ -30,33 +28,48 @@ jobs:
           path: zpm
 
       - name: Install latest Sig
-        id: sig
-        shell: pwsh
         run: |
-          $url = "https://github.com/SB0LTD/sig/releases/latest/download/sig-x86_64-windows.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile sig.zip
-          Expand-Archive -Path sig.zip -DestinationPath sig-dist -Force
-          # The archive extracts to sig-<version>-x86_64-windows/bin/sig.exe.
-          $bin = Get-ChildItem -Path sig-dist -Recurse -Filter sig.exe | Select-Object -First 1
-          if (-not $bin) { throw "sig.exe not found in the downloaded archive" }
-          $binDir = Split-Path $bin.FullName
-          Write-Host "Sig binary: $($bin.FullName)"
-          "$binDir" | Out-File -FilePath $env:GITHUB_PATH -Append
-          & $bin.FullName version
+          set -euo pipefail
+          URL="https://github.com/SB0LTD/sig/releases/latest/download/sig-x86_64-linux.tar.xz"
+          echo "Downloading $URL"
+          curl -fSL "$URL" -o sig.tar.xz
+          mkdir -p sig-dist
+          tar -xf sig.tar.xz -C sig-dist
+          SIG_BIN="$(find "$PWD/sig-dist" -type f -name sig | head -n1)"
+          if [ -z "$SIG_BIN" ]; then echo "sig binary not found"; exit 1; fi
+          chmod +x "$SIG_BIN"
+          echo "$(dirname "$SIG_BIN")" >> "$GITHUB_PATH"
+          "$SIG_BIN" version
 
-      - name: sig build
+      - name: Build (native)
         working-directory: sls
-        shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
+          set -euo pipefail
           sig build
-          if ($LASTEXITCODE -ne 0) { throw "sig build failed with exit code $LASTEXITCODE" }
 
-      - name: sig build test
+      - name: Test (native)
         working-directory: sls
-        shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
+          set -euo pipefail
           sig build test
-          if ($LASTEXITCODE -ne 0) { throw "sig build test failed with exit code $LASTEXITCODE" }
+
+      - name: Cross-compile all release targets
+        working-directory: sls
+        run: |
+          set -euo pipefail
+          for triple in \
+            x86_64-linux-gnu aarch64-linux-gnu \
+            x86_64-macos aarch64-macos \
+            x86_64-windows aarch64-windows; do
+            echo "::group::$triple"
+            rm -rf sig-out
+            sig build -Dtarget="$triple" -Doptimize=ReleaseFast
+            echo "::endgroup::"
+          done
+
+      # SB0 native is experimental; exercise the target best-effort without
+      # failing CI (see README "Platforms").
+      - name: SB0 native (experimental, non-fatal)
+        continue-on-error: true
+        working-directory: sls
+        run: bash scripts/build-sb0.sh sig-out/bin/sls-aarch64-sb0.sb0x || true

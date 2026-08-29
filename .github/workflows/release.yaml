@@ -19,18 +19,20 @@ concurrency:
 
 jobs:
   release:
-    name: Build and publish release
-    runs-on: windows-latest
+    name: Build all platforms and publish
+    runs-on: ubuntu-latest
     steps:
       - name: Resolve tag
         id: meta
-        shell: pwsh
         run: |
-          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ github.event.inputs.tag }}" } else { "${{ github.ref_name }}" }
-          $version = $tag -replace '^v', ''
-          "tag=$tag"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Building release $tag (version $version)"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Building release $TAG"
 
       - name: Checkout sls
         uses: actions/checkout@v4
@@ -38,6 +40,8 @@ jobs:
           path: sls
           ref: ${{ steps.meta.outputs.tag }}
 
+      # zpm is a path dependency (../zpm). Check it out as a sibling so
+      # build.sig.zon resolves the same way it does locally.
       - name: Checkout zpm (path dependency)
         uses: actions/checkout@v4
         with:
@@ -46,92 +50,140 @@ jobs:
 
       - name: Install latest Sig
         id: sig
-        shell: pwsh
         run: |
-          $url = "https://github.com/SB0LTD/sig/releases/latest/download/sig-x86_64-windows.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile sig.zip
-          Expand-Archive -Path sig.zip -DestinationPath sig-dist -Force
-          $bin = Get-ChildItem -Path sig-dist -Recurse -Filter sig.exe | Select-Object -First 1
-          if (-not $bin) { throw "sig.exe not found in the downloaded archive" }
-          $binDir = Split-Path $bin.FullName
-          "$binDir" | Out-File -FilePath $env:GITHUB_PATH -Append
-          $ver = (& $bin.FullName version)
-          "sig_version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Using $ver"
+          set -euo pipefail
+          URL="https://github.com/SB0LTD/sig/releases/latest/download/sig-x86_64-linux.tar.xz"
+          echo "Downloading $URL"
+          curl -fSL "$URL" -o sig.tar.xz
+          mkdir -p sig-dist
+          tar -xf sig.tar.xz -C sig-dist
+          SIG_BIN="$(find "$PWD/sig-dist" -type f -name sig | head -n1)"
+          if [ -z "$SIG_BIN" ]; then echo "sig binary not found"; exit 1; fi
+          chmod +x "$SIG_BIN"
+          echo "$(dirname "$SIG_BIN")" >> "$GITHUB_PATH"
+          echo "sig_version=$("$SIG_BIN" version)" >> "$GITHUB_OUTPUT"
+          "$SIG_BIN" version
 
-      - name: Test
+      - name: Test (native)
         working-directory: sls
-        shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
+          set -euo pipefail
           sig build test
-          if ($LASTEXITCODE -ne 0) { throw "sig build test failed with exit code $LASTEXITCODE" }
 
-      - name: Build (ReleaseFast)
-        working-directory: sls
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          sig build -Doptimize=ReleaseFast
-          if ($LASTEXITCODE -ne 0) { throw "sig build failed with exit code $LASTEXITCODE" }
-          if (-not (Test-Path "sig-out/bin/sls.exe")) { throw "sls.exe was not produced" }
-
-      - name: Package artifact
+      - name: Build all targets, package, checksum
         id: package
         working-directory: sls
-        shell: pwsh
         run: |
-          $version = "${{ steps.meta.outputs.version }}"
-          $stage = "sls-$version-x86_64-windows"
-          New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item "sig-out/bin/sls.exe" "$stage/"
-          Copy-Item "README.md","LICENSE","NOTICE" "$stage/"
-          $zip = "$stage.zip"
-          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
-          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          "$hash  $zip" | Out-File -FilePath "$zip.sha256" -Encoding ascii
-          Write-Host "Packaged $zip ($hash)"
-          "artifact=$zip"        | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "checksum=$zip.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          OUT="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$OUT"
+
+          # target-triple : platform-slug : is-windows
+          TARGETS="
+          x86_64-linux-gnu:x86_64-linux:0
+          aarch64-linux-gnu:aarch64-linux:0
+          x86_64-macos:x86_64-macos:0
+          aarch64-macos:aarch64-macos:0
+          x86_64-windows:x86_64-windows:1
+          aarch64-windows:aarch64-windows:1
+          "
+
+          for entry in $TARGETS; do
+            [ -z "$entry" ] && continue
+            triple="${entry%%:*}"; rest="${entry#*:}"
+            slug="${rest%%:*}"; is_win="${rest#*:}"
+
+            echo "::group::build $slug ($triple)"
+            rm -rf sig-out
+            sig build -Dtarget="$triple" -Doptimize=ReleaseFast
+
+            stage="sls-$VERSION-$slug"
+            mkdir -p "$stage"
+            cp README.md LICENSE NOTICE "$stage/"
+            if [ "$is_win" = "1" ]; then
+              cp sig-out/bin/sls.exe "$stage/"
+              (cd "$stage" && zip -qr "$OUT/$stage.zip" .)
+            else
+              cp sig-out/bin/sls "$stage/"
+              chmod +x "$stage/sls"
+              tar -czf "$OUT/$stage.tar.gz" -C "$stage" .
+            fi
+            rm -rf "$stage"
+            echo "::endgroup::"
+          done
+
+          cd "$OUT"
+          sha256sum * > SHA256SUMS.txt
+          echo "Artifacts:"; ls -la
+          echo "dist=$OUT" >> "$GITHUB_OUTPUT"
+
+      # SB0 native is experimental and not yet buildable end-to-end (see README).
+      # Attempt it best-effort so the target stays exercised, but never fail the
+      # release or block the hosted artifacts on it.
+      - name: Build SB0 native (experimental, non-fatal)
+        continue-on-error: true
+        working-directory: sls
+        run: |
+          set -uo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          OUT="$GITHUB_WORKSPACE/dist"
+          bash scripts/build-sb0.sh "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0x" || true
+          if [ -f "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0x" ]; then
+            cp "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0x" "$OUT/"
+            (cd "$OUT" && sha256sum "sls-$VERSION-aarch64-sb0.sb0x" >> SHA256SUMS.txt)
+            echo "SB0 native artifact attached."
+          else
+            echo "SB0 native artifact not produced (expected while SB0 codegen is WIP)."
+          fi
 
       - name: Publish GitHub Release
-        working-directory: sls
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: pwsh
         run: |
-          $tag = "${{ steps.meta.outputs.tag }}"
-          $version = "${{ steps.meta.outputs.version }}"
-          $sig = "${{ steps.sig.outputs.sig_version }}"
-          $notes = @"
-          ## sls $tag
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          SIG="${{ steps.sig.outputs.sig_version }}"
+          DIST="${{ steps.package.outputs.dist }}"
 
-          The Sig Language Server — a native, allocator-free LSP implementation for Sig,
-          built on [zpm](https://github.com/SB0LTD/zpm). sls is a fork of
+          NOTES="$(cat <<EOF
+          ## sls $TAG
+
+          The Sig Language Server — a native, allocator-free LSP implementation for
+          Sig, built on [zpm](https://github.com/SB0LTD/zpm). sls is a fork of
           [zigtools/zls](https://github.com/zigtools/zls) (MIT), rewritten for Sig.
 
-          **Built with:** $sig
+          **Built with:** $SIG (cross-compiled to all targets from a single host).
+
+          ### Downloads
+
+          | Platform | Archive |
+          |----------|---------|
+          | Windows x86_64  | \`sls-$VERSION-x86_64-windows.zip\`  |
+          | Windows aarch64 | \`sls-$VERSION-aarch64-windows.zip\` |
+          | Linux x86_64    | \`sls-$VERSION-x86_64-linux.tar.gz\`  |
+          | Linux aarch64   | \`sls-$VERSION-aarch64-linux.tar.gz\` |
+          | macOS x86_64    | \`sls-$VERSION-x86_64-macos.tar.gz\`  |
+          | macOS aarch64   | \`sls-$VERSION-aarch64-macos.tar.gz\` |
 
           ### Install
-          1. Download and extract ``sls-$version-x86_64-windows.zip``.
-          2. Point your LSP-capable editor at ``sls.exe`` for the ``sig`` language.
+          Extract the archive for your platform and point your LSP-capable editor at
+          the \`sls\` (or \`sls.exe\`) binary for the \`sig\` language.
 
           ### Verify
-          Compare the archive's SHA-256 against the published ``.sha256`` file.
+          Checksums for every artifact are in \`SHA256SUMS.txt\`.
 
-          See the [README](https://github.com/${{ github.repository }}/blob/$tag/README.md)
+          See the [README](https://github.com/${{ github.repository }}/blob/$TAG/README.md)
           for editor setup and the feature matrix.
-          "@
-          # Create the release if it does not yet exist, then upload assets.
-          if (-not (gh release view $tag 2>$null)) {
-            gh release create $tag `
-              --title "sls $tag" `
-              --notes "$notes" `
-              "${{ steps.package.outputs.artifact }}" `
-              "${{ steps.package.outputs.checksum }}"
-          } else {
-            gh release upload $tag `
-              "${{ steps.package.outputs.artifact }}" `
-              "${{ steps.package.outputs.checksum }}" --clobber
-          }
+          EOF
+          )"
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DIST"/* --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" "$DIST"/* \
+              --repo "${{ github.repository }}" \
+              --title "sls $TAG" \
+              --notes "$NOTES"
+          fi

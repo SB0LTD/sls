@@ -15,7 +15,7 @@ const position = @import("position");
 const symbols = @import("symbols");
 
 pub const SERVER_NAME = "sls";
-pub const SERVER_VERSION = "0.0.1";
+pub const SERVER_VERSION = "0.0.2";
 
 /// The outcome of handling one message.
 pub const Outcome = enum {

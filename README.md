@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/built%20on-zpm-1e40af?style=flat-square" alt="Built on zpm" />
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT" />
   <img src="https://img.shields.io/badge/allocations-zero-111827?style=flat-square" alt="Zero allocations" />
-  <img src="https://img.shields.io/badge/platform-windows-6b7280?style=flat-square" alt="Platform: Windows" />
+  <img src="https://img.shields.io/badge/platforms-windows%20%7C%20linux%20%7C%20macos%20%7C%20sb0-6b7280?style=flat-square" alt="Platforms" />
 </p>
 
 <p align="center">
@@ -46,7 +46,8 @@ predictability over convenience:
   bounded inbound ring, and caller-provided scratch. There is no heap in any hot
   path, so memory use is known at compile time and never fragments.
 - **No runtime std I/O.** The transport is raw `Content-Length`-framed bytes over
-  stdio, read and written through direct Win32 `ReadFile`/`WriteFile` calls.
+  stdio, read and written through direct OS calls — Win32 `ReadFile`/`WriteFile`
+  on Windows, `read(2)`/`write(2)` on POSIX — never the buffered `std.io` stack.
 - **Leans on `zpm`.** Reusable infrastructure (JSON scanning today; logging, file
   I/O, and crypto as features grow) comes from the [`zpm`](https://github.com/SB0LTD/zpm)
   package library by path dependency — never reimplemented locally.
@@ -95,6 +96,41 @@ sig build          # build sig-out/bin/sls
 sig build run      # build and run the server
 sig build test     # run the full unit-test suite
 ```
+
+Cross-compile to any supported target from a single host:
+
+```sh
+sig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseFast
+sig build -Dtarget=aarch64-macos    -Doptimize=ReleaseFast
+sig build -Dtarget=aarch64-windows  -Doptimize=ReleaseFast
+```
+
+## Platforms
+
+sls's only OS-specific code is the stdio transport, which has a Win32 backend
+and a POSIX backend chosen at comptime. Every release is cross-compiled from a
+single host and published on the [Releases](https://github.com/SB0LTD/sls/releases)
+page.
+
+| Platform | Target triple | Artifact | Status |
+|----------|---------------|----------|--------|
+| Windows x86_64  | `x86_64-windows`   | `sls-<ver>-x86_64-windows.zip`  | ✅ supported |
+| Windows aarch64 | `aarch64-windows`  | `sls-<ver>-aarch64-windows.zip` | ✅ supported |
+| Linux x86_64    | `x86_64-linux-gnu` | `sls-<ver>-x86_64-linux.tar.gz`  | ✅ supported |
+| Linux aarch64   | `aarch64-linux-gnu`| `sls-<ver>-aarch64-linux.tar.gz` | ✅ supported |
+| macOS x86_64    | `x86_64-macos`     | `sls-<ver>-x86_64-macos.tar.gz`  | ✅ supported |
+| macOS aarch64   | `aarch64-macos`    | `sls-<ver>-aarch64-macos.tar.gz` | ✅ supported |
+| **SB0 native**  | `aarch64-sb0`      | `sls-<ver>-aarch64-sb0.sb0x`     | 🧪 experimental |
+
+> [!WARNING]
+> **SB0 native is experimental and not yet buildable end-to-end.** SB0 is a
+> freestanding AArch64 target with no libc and no hosted stdio; the Sig
+> toolchain's SB0 code generation and userspace runtime (the `svc #0` trap ABI
+> and SB0X loader) are still in progress. sls is a hosted stdio program, so it
+> cannot yet link a working SB0 image — the target is wired
+> (`src/platform/sb0_native.ld`, `scripts/build-sb0.sh`) and documented so it
+> becomes real the moment SB0 userspace support lands. The release pipeline
+> attempts it best-effort and never blocks the hosted artifacts on it.
 
 ## Try it — a real LSP session
 
@@ -146,7 +182,7 @@ sls is layered; lower layers never import from higher layers.
 ```
 Layer 2  server/     LSP request dispatch, lifecycle, capabilities
 Layer 1  lsp/        JSON-RPC framing, message parsing, JSON emitting
-Layer 1  platform/   raw Win32 stdio transport
+Layer 1  platform/   raw stdio transport (Win32 + POSIX)
 Layer 1  (zpm)       json scanning (and more as features land)
 Layer 0  core/       pure data — document store, position math, symbol scanner
 ```
@@ -166,7 +202,8 @@ sls/
 └── src/
     ├── main.sig             # transport loop — the sole I/O site
     ├── platform/
-    │   └── stdio.sig        # blocking stdio over Win32 ReadFile/WriteFile
+    │   ├── stdio.sig         # blocking stdio: Win32 + POSIX backends
+    │   └── sb0_native.ld     # SB0K linker script (experimental target)
     ├── lsp/
     │   ├── message.sig      # Content-Length framing + JSON-RPC parsing
     │   └── jwrite.sig       # allocator-free JSON writer
@@ -184,10 +221,15 @@ Every module in `src/` honors the same rules:
 
 - No allocator — fixed arrays, ring buffers, comptime capacities, and
   caller-provided buffers only.
-- No standard-library I/O at runtime — transport is pure Win32.
+- No standard-library I/O at runtime — transport is direct OS calls (Win32 on
+  Windows, POSIX `read`/`write` elsewhere).
 - One job per module — the parser does not do I/O; the drawer of bytes does not
   parse; pure logic lives in `core/`.
 - Every module with logic carries inline `test` blocks, run by `sig build test`.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Credits
 
