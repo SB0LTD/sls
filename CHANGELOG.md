@@ -4,6 +4,34 @@ All notable changes to sls are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and sls aims to follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.5] - 2026-08-29 — Runs on SB0
+
+### Added
+- **The full LSP server runs on SB0.** The SB0 build is now a bare-metal SB0K
+  image that boots under QEMU and serves LSP over the PL011 UART — not an
+  identity stub. A dedicated reset entry (`src/platform/sb0_entry.sig`) sets up
+  the stack, zeroes BSS, enables FP/SIMD, brings up the UART
+  (`src/platform/sb0_uart.sig`), and then runs the **same** server dispatch,
+  framing, document store, and symbol analysis the hosted binaries run.
+- **Shared transport loop** (`src/lsp/loop.sig`) — the read/frame/dispatch/
+  respond cycle is factored out and generic over the byte pipe, so the hosted
+  (Win32/POSIX stdio) and SB0 (UART) builds share identical protocol code.
+- **SB0-in-QEMU CI** — the [SB0 workflow](.github/workflows/sb0.yaml) installs
+  `qemu-system-aarch64`, builds the SB0K image, boots it on the QEMU `virt`
+  machine, drives a full LSP session over the serial line, and asserts the
+  `initialize`/`documentSymbol`/`shutdown` responses. The release also
+  boot-verifies the SB0 image before publishing it.
+- The SB0 artifact is now a bootable `.sb0k` image (`sls-<ver>-aarch64-sb0.tar.gz`).
+
+### Changed
+- SB0 promoted from an identity image (0.0.3/0.0.4) to a booting, LSP-serving
+  image. The `svc #0` identity path is superseded by the UART transport.
+
+### Notes
+- The SB0 transport is UART-based (bare metal). Running sls as a hosted SB0
+  *userspace* process over the kernel's queue/channel handles — under a booted
+  SB0 kernel — remains a possible future refinement.
+
 ## [0.0.4] - 2026-08-29 — Verified everywhere
 
 ### Added
@@ -96,6 +124,7 @@ All notable changes to sls are documented here. The format is based on
   zpm by path dependency.
 - MIT licensed, with the upstream ZLS copyright preserved.
 
+[0.0.5]: https://github.com/SB0LTD/sls/releases/tag/v0.0.5
 [0.0.4]: https://github.com/SB0LTD/sls/releases/tag/v0.0.4
 [0.0.3]: https://github.com/SB0LTD/sls/releases/tag/v0.0.3
 [0.0.2]: https://github.com/SB0LTD/sls/releases/tag/v0.0.2

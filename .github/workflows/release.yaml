@@ -48,6 +48,13 @@ jobs:
           repository: SB0LTD/zpm
           path: zpm
 
+      - name: Install QEMU (for SB0 boot verification)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm
+          qemu-system-aarch64 --version | head -1
+
       - name: Install latest Sig
         id: sig
         run: |
@@ -113,15 +120,18 @@ jobs:
             echo "::endgroup::"
           done
 
-          # SB0 native — our own OS. A dedicated SB0X userspace image built via
-          # the SB0 svc #0 trap ABI (see scripts/build-sb0.sh). Packaged as a
-          # first-class artifact alongside the hosted targets.
-          echo "::group::build aarch64-sb0 (SB0X native)"
+          # SB0 native — our own OS. A bare-metal SB0K image that boots under
+          # QEMU and runs the full LSP server over the PL011 UART (see
+          # scripts/build-sb0.sh). Packaged as a first-class artifact.
+          echo "::group::build aarch64-sb0 (SB0K native)"
           rm -rf sig-out
-          bash scripts/build-sb0.sh "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0x"
+          bash scripts/build-sb0.sh "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0k"
+          # Boot the image under QEMU and assert the LSP server responds before
+          # shipping it — a release never publishes an SB0 image that doesn't run.
+          bash scripts/sb0-qemu-test.sh "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0k"
           sb0_stage="sls-$VERSION-aarch64-sb0"
           mkdir -p "$sb0_stage"
-          cp "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0x" "$sb0_stage/sls.sb0x"
+          cp "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0k" "$sb0_stage/sls.sb0k"
           cp README.md LICENSE NOTICE "$sb0_stage/"
           tar -czf "$OUT/$sb0_stage.tar.gz" -C "$sb0_stage" .
           rm -rf "$sb0_stage"
@@ -161,7 +171,7 @@ jobs:
           | Linux aarch64   | \`sls-$VERSION-aarch64-linux.tar.gz\` |
           | macOS x86_64    | \`sls-$VERSION-x86_64-macos.tar.gz\`  |
           | macOS aarch64   | \`sls-$VERSION-aarch64-macos.tar.gz\` |
-          | **SB0 native**  | \`sls-$VERSION-aarch64-sb0.tar.gz\` (SB0X image) |
+          | **SB0 native**  | \`sls-$VERSION-aarch64-sb0.tar.gz\` (bootable SB0K image) |
 
           ### Install
           Extract the archive for your platform and point your LSP-capable editor at

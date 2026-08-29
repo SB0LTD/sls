@@ -1,0 +1,58 @@
+name: SB0
+
+# Builds the sls SB0K bare-metal image and proves the full LSP server actually
+# runs on SB0 (aarch64) by booting it under QEMU and driving an LSP session
+# over the serial console.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: sb0-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sb0-qemu:
+    name: Build SB0K image and boot under QEMU
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sls
+        uses: actions/checkout@v4
+        with:
+          path: sls
+
+      - name: Checkout zpm (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: SB0LTD/zpm
+          path: zpm
+
+      - name: Install QEMU (aarch64 system emulation)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm
+          qemu-system-aarch64 --version | head -1
+
+      - name: Install latest Sig
+        run: |
+          set -euo pipefail
+          URL="https://github.com/SB0LTD/sig/releases/latest/download/sig-x86_64-linux.tar.xz"
+          curl -fSL "$URL" -o sig.tar.xz
+          mkdir -p sig-dist && tar -xf sig.tar.xz -C sig-dist
+          SIG_BIN="$(find "$PWD/sig-dist" -type f -name sig | head -n1)"
+          chmod +x "$SIG_BIN"
+          echo "$(dirname "$SIG_BIN")" >> "$GITHUB_PATH"
+          "$SIG_BIN" version
+
+      - name: Build SB0K image
+        working-directory: sls
+        run: bash scripts/build-sb0.sh sig-out/bin/sls-aarch64-sb0.sb0k
+
+      - name: Boot under QEMU and drive an LSP session
+        working-directory: sls
+        run: bash scripts/sb0-qemu-test.sh sig-out/bin/sls-aarch64-sb0.sb0k

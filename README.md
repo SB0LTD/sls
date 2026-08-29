@@ -120,25 +120,38 @@ page.
 | Linux aarch64   | `aarch64-linux-gnu`| `sls-<ver>-aarch64-linux.tar.gz` | ✅ supported |
 | macOS x86_64    | `x86_64-macos`     | `sls-<ver>-x86_64-macos.tar.gz`  | ✅ supported |
 | macOS aarch64   | `aarch64-macos`    | `sls-<ver>-aarch64-macos.tar.gz` | ✅ supported |
-| **SB0 native**  | `aarch64-sb0`      | `sls-<ver>-aarch64-sb0.tar.gz` (SB0X) | ✅ native image |
+| **SB0 native**  | `aarch64-sb0`      | `sls-<ver>-aarch64-sb0.tar.gz` (SB0K) | ✅ boots + runs |
 
 ### SB0 native
 
-sls builds a real native image for [SB0](https://github.com/SB0LTD/sig) — our
-own operating system. SB0 is a freestanding AArch64 target with no libc and no
-hosted stdio, so the SB0 build does not use the Win32/POSIX transport. Instead a
-dedicated native entry (`src/platform/sb0_entry.sig`) talks to the SB0 kernel
-through the `svc #0` trap ABI (operation code in `x8`, arguments in `x0..x5`) and
-links with the SB0X userspace layout (`src/platform/sb0x.ld`). The output is a
-structurally valid **SB0X** image (a 64-byte `SB0X` header plus one RX segment)
-that follows the SB0 process-entry contract (`x0 = *BootHandoffBlock`,
-`x1 = *HandleTable`).
+sls runs on [SB0](https://github.com/SB0LTD/sig) — our own operating system — as
+a **bare-metal SB0K image**. SB0 is a freestanding AArch64 target with no libc
+and no hosted stdio, so the SB0 build swaps the transport, not the server: a
+dedicated reset entry (`src/platform/sb0_entry.sig`) brings up the PL011 UART and
+then runs the **exact same LSP server** as the hosted builds
+(`src/lsp/loop.sig`), reading framed requests from the serial line and writing
+framed responses back. The dispatch, framing, document store, and symbol
+analysis are byte-for-byte the code the Windows/Linux/macOS binaries run — only
+the byte pipe differs.
+
+The image is a valid SB0K container (64-byte `SB0K` header at `0x40200000`
+followed by the reset code, per the Sig toolchain's `sb0_runner.ld` contract) and
+boots directly on the QEMU `virt` machine.
 
 > [!NOTE]
-> The SB0X image currently announces sls's identity via the `debug_print` trap
-> and exits — it proves the native SB0 target path end to end. The full
-> bidirectional LSP transport over SB0's queue/channel handles (SB0 input is
-> capability-based, not a POSIX read) is the next step for the SB0 build.
+> This is proven in CI: the [SB0 workflow](.github/workflows/sb0.yaml) builds the
+> SB0K image, **boots it under QEMU (`qemu-system-aarch64`)**, drives a full LSP
+> session over the serial console, and asserts the responses — so every change
+> is verified to actually run the language server on SB0. Try it locally:
+>
+> ```sh
+> pwsh scripts/build-sb0.ps1        # or: bash scripts/build-sb0.sh
+> bash scripts/sb0-qemu-test.sh sig-out/bin/sls-aarch64-sb0.sb0k
+> ```
+>
+> The current SB0 transport is UART-based (bare metal). Running as a hosted SB0
+> *userspace* process over the kernel's queue/channel handles — under a booted
+> SB0 kernel rather than bare metal — is a natural future refinement.
 
 ## Try it — a real LSP session
 
@@ -213,9 +226,11 @@ sls/
     ├── main.sig             # transport loop — the sole I/O site
     ├── platform/
     │   ├── stdio.sig         # blocking stdio: Win32 + POSIX backends
-    │   ├── sb0_entry.sig     # SB0 native entry (svc #0 trap ABI)
-    │   └── sb0x.ld           # SB0X userspace image linker script
+    │   ├── sb0_entry.sig     # SB0 bare-metal reset entry + UART transport
+    │   ├── sb0_uart.sig      # PL011 UART driver (QEMU virt)
+    │   └── sb0k.ld           # SB0K bare-metal image linker script
     ├── lsp/
+    │   ├── loop.sig         # shared transport loop (generic over the byte pipe)
     │   ├── message.sig      # Content-Length framing + JSON-RPC parsing
     │   └── jwrite.sig       # allocator-free JSON writer
     ├── core/
@@ -248,12 +263,17 @@ sls is verified at two levels, and both run in CI:
   case-insensitive and whitespace-tolerant headers, missing `Content-Length`),
   and the full server dispatch (lifecycle, document sync, `documentSymbol`,
   unknown-method errors, JSON-escape decoding).
-- **End-to-end** (`scripts/e2e.ps1`) — spawns the *actual built binary*, drives
-  a complete `initialize → didOpen → documentSymbol → didChange → documentSymbol
-  → didClose → shutdown → exit` session over stdio, parses the framing, and
-  asserts every response. The [E2E workflow](.github/workflows/e2e.yaml) runs
-  this on **Windows, Linux, and macOS** runners, so each release is proven to
-  actually run and speak LSP on every supported OS — not merely to compile.
+- **End-to-end, hosted** (`scripts/e2e.ps1`) — spawns the *actual built binary*,
+  drives a complete `initialize → didOpen → documentSymbol → didChange →
+  documentSymbol → didClose → shutdown → exit` session over stdio, parses the
+  framing, and asserts every response. The [E2E workflow](.github/workflows/e2e.yaml)
+  runs this on **Windows, Linux, and macOS** runners, so each release is proven
+  to actually run and speak LSP on every hosted OS — not merely to compile.
+- **End-to-end, SB0** (`scripts/sb0-qemu-test.sh`) — boots the bare-metal SB0K
+  image under **QEMU (`qemu-system-aarch64`)**, drives a full LSP session over
+  the serial console, and asserts the responses. The
+  [SB0 workflow](.github/workflows/sb0.yaml) runs this on every change, proving
+  the language server runs on SB0 (aarch64) too.
 
 ## Changelog
 
