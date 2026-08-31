@@ -15,6 +15,7 @@ OUT="${1:-sig-out/bin/sls-aarch64-sb0.sb0k}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 LD="$HERE/src/platform/sb0k.ld"
 ZPM="$HERE/../zpm/src/core"
+ZLSP="$HERE/../zpm/src/lsp"   # reusable @zpm/lsp modules
 
 echo "== sls SB0K bare-metal build =="
 echo "target:        aarch64-sb0"
@@ -39,14 +40,14 @@ sig build-exe \
   --script "$LD" \
   --dep uart --dep loop --dep server -Mroot="$HERE/src/platform/sb0_entry.sig" \
   -Mjson="$ZPM/json.sig" \
-  -Mjwrite="$HERE/src/lsp/jwrite.sig" \
-  -Mdocument="$HERE/src/core/document.sig" \
-  -Mposition="$HERE/src/core/position.sig" \
-  -Msymbols="$HERE/src/core/symbols.sig" \
+  -Mjwrite="$ZLSP/jwrite.sig" \
+  -Mdocument="$ZLSP/document.sig" \
+  -Mposition="$ZLSP/position.sig" \
+  -Msymbols="$ZLSP/symbols.sig" \
   -Muart="$HERE/src/platform/sb0_uart.sig" \
-  --dep json -Mmessage="$HERE/src/lsp/message.sig" \
-  --dep json --dep message --dep jwrite --dep document --dep position --dep symbols -Mserver="$HERE/src/server/server.sig" \
-  --dep message --dep server -Mloop="$HERE/src/lsp/loop.sig" \
+  --dep json -Mmessage="$ZLSP/message.sig" \
+  --dep json --dep message --dep jwrite --dep document --dep position --dep symbols -Mserver="$ZLSP/server.sig" \
+  --dep message --dep server -Mloop="$ZLSP/loop.sig" \
   -femit-bin="$RAW"
 
 if [ ! -f "$RAW" ]; then

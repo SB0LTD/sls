@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $here = Split-Path $PSScriptRoot -Parent
 $ld = Join-Path $here "src/platform/sb0k.ld"
 $zpm = Join-Path $here "../zpm/src/core"
+$zlsp = Join-Path $here "../zpm/src/lsp"   # reusable @zpm/lsp modules
 $outDir = Split-Path $Out -Parent
 if (-not $outDir) { $outDir = "." }
 $raw = Join-Path $outDir "sls_sb0k_raw"
@@ -19,14 +20,14 @@ $a = @(
   "--script","$ld",
   "--dep","uart","--dep","loop","--dep","server","-Mroot=$here/src/platform/sb0_entry.sig",
   "-Mjson=$zpm/json.sig",
-  "-Mjwrite=$here/src/lsp/jwrite.sig",
-  "-Mdocument=$here/src/core/document.sig",
-  "-Mposition=$here/src/core/position.sig",
-  "-Msymbols=$here/src/core/symbols.sig",
+  "-Mjwrite=$zlsp/jwrite.sig",
+  "-Mdocument=$zlsp/document.sig",
+  "-Mposition=$zlsp/position.sig",
+  "-Msymbols=$zlsp/symbols.sig",
   "-Muart=$here/src/platform/sb0_uart.sig",
-  "--dep","json","-Mmessage=$here/src/lsp/message.sig",
-  "--dep","json","--dep","message","--dep","jwrite","--dep","document","--dep","position","--dep","symbols","-Mserver=$here/src/server/server.sig",
-  "--dep","message","--dep","server","-Mloop=$here/src/lsp/loop.sig",
+  "--dep","json","-Mmessage=$zlsp/message.sig",
+  "--dep","json","--dep","message","--dep","jwrite","--dep","document","--dep","position","--dep","symbols","-Mserver=$zlsp/server.sig",
+  "--dep","message","--dep","server","-Mloop=$zlsp/loop.sig",
   "-femit-bin=$raw"
 )
 & sig @a
