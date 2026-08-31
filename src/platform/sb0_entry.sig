@@ -25,7 +25,7 @@ extern const __stack_top: u8;
 
 // Static storage for the server and transport buffers — off the (small) boot
 // stack. These land in BSS and are zeroed by the reset routine.
-var server_state: server_mod.Server = .{};
+var server_state: server_mod.Server = .{ .info = .{ .name = "sls", .version = build_version } };
 var buffers: loop.Buffers = .{};
 
 /// A UART-backed I/O backend exposing the same `read`/`writeAll` shape the
