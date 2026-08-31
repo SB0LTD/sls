@@ -120,38 +120,40 @@ page.
 | Linux aarch64   | `aarch64-linux-gnu`| `sls-<ver>-aarch64-linux.tar.gz` | ✅ supported |
 | macOS x86_64    | `x86_64-macos`     | `sls-<ver>-x86_64-macos.tar.gz`  | ✅ supported |
 | macOS aarch64   | `aarch64-macos`    | `sls-<ver>-aarch64-macos.tar.gz` | ✅ supported |
-| **SB0 native**  | `aarch64-sb0`      | `sls-<ver>-aarch64-sb0.tar.gz` (SB0K) | ✅ boots + runs |
+| **SB0 native**  | `aarch64-sb0`      | `sls-<ver>-aarch64-sb0.tar.gz` (SB0K) | ✅ bare-metal + userspace |
 
 ### SB0 native
 
-sls runs on [SB0](https://github.com/SB0LTD/sig) — our own operating system — as
-a **bare-metal SB0K image**. SB0 is a freestanding AArch64 target with no libc
-and no hosted stdio, so the SB0 build swaps the transport, not the server: a
-dedicated reset entry (`src/platform/sb0_entry.sig`) brings up the PL011 UART and
-then runs the **exact same LSP server** as the hosted builds
-(`src/lsp/loop.sig`), reading framed requests from the serial line and writing
-framed responses back. The dispatch, framing, document store, and symbol
-analysis are byte-for-byte the code the Windows/Linux/macOS binaries run — only
-the byte pipe differs.
+sls runs on [SB0](https://github.com/SB0LTD/sig) — our own operating system — in
+two forms, both running the **exact same LSP server** as the hosted builds (the
+reusable [`@zpm/lsp`](https://github.com/SB0LTD/zpm) modules); only the byte pipe
+differs:
 
-The image is a valid SB0K container (64-byte `SB0K` header at `0x40200000`
-followed by the reset code, per the Sig toolchain's `sb0_runner.ld` contract) and
-boots directly on the QEMU `virt` machine.
+1. **Bare-metal SB0K image.** A reset entry (`src/platform/sb0_entry.sig`) brings
+   up the PL011 UART and runs the LSP loop over the serial line. The output is a
+   valid SB0K container (64-byte `SB0K` header at `0x40200000`, per the Sig
+   toolchain's `sb0_runner.ld` contract) that boots directly on QEMU `virt`.
+
+2. **Native userspace process.** Under the [SB0/Nexus kernel](https://github.com/SB0LTD/nexus),
+   sls runs at **EL0 as an SB0X process** and does bidirectional stdio through the
+   SB0 `channel` syscalls (`channel_send` / `channel_receive` via `svc #0`) — the
+   real OS I/O path, not MMIO. The kernel loads the SB0X image, delegates a
+   bidirectional console `channel` handle, and the server reads framed requests
+   and writes framed responses over it. The userspace app and the kernel-side
+   channel syscalls live in the nexus repo (`apps/sls`, merged).
 
 > [!NOTE]
-> This is proven in CI: the [SB0 workflow](.github/workflows/sb0.yaml) builds the
-> SB0K image, **boots it under QEMU (`qemu-system-aarch64`)**, drives a full LSP
-> session over the serial console, and asserts the responses — so every change
-> is verified to actually run the language server on SB0. Try it locally:
+> Both paths are proven in CI. sls's own [SB0 workflow](.github/workflows/sb0.yaml)
+> boots the bare-metal SB0K image under QEMU and drives a full LSP session over
+> serial. The nexus repo's `sls-userspace` workflow builds the kernel with sls
+> embedded, boots it headless under QEMU, and drives a full
+> `initialize → documentSymbol → shutdown` session over the channel syscalls —
+> asserting the responses. Try the bare-metal path locally:
 >
 > ```sh
 > pwsh scripts/build-sb0.ps1        # or: bash scripts/build-sb0.sh
 > bash scripts/sb0-qemu-test.sh sig-out/bin/sls-aarch64-sb0.sb0k
 > ```
->
-> The current SB0 transport is UART-based (bare metal). Running as a hosted SB0
-> *userspace* process over the kernel's queue/channel handles — under a booted
-> SB0 kernel rather than bare metal — is a natural future refinement.
 
 ## Try it — a real LSP session
 
@@ -199,59 +201,59 @@ vim.lsp.start({
 
 ## Architecture
 
-sls is layered; lower layers never import from higher layers.
+The reusable LSP core lives in [`@zpm/lsp`](https://github.com/SB0LTD/zpm); sls
+is the thin, platform-specific shell that wires a byte pipe to it. Lower layers
+never import from higher layers.
 
 ```
-Layer 2  server/     LSP request dispatch, lifecycle, capabilities
-Layer 1  lsp/        JSON-RPC framing, message parsing, JSON emitting
-Layer 1  platform/   raw stdio transport (Win32 + POSIX)
-Layer 1  (zpm)       json scanning (and more as features land)
-Layer 0  core/       pure data — document store, position math, symbol scanner
+@zpm/lsp   server   LSP request dispatch, lifecycle, capabilities
+@zpm/lsp   loop     shared transport loop (generic over the byte pipe)
+@zpm/lsp   message  Content-Length framing + JSON-RPC parse
+@zpm/lsp   jwrite   allocator-free JSON writer
+@zpm/lsp   document / position / symbols  — pure data + analysis
+@zpm       json     shallow JSON scanning
+sls        platform/  the byte pipe: Win32/POSIX stdio, or SB0 UART/channel
+sls        main.sig   hosted entry — wires stdio to the @zpm/lsp loop
 ```
 
-State flows down (the server owns the document store and passes text into pure
-analysis functions); events flow up (framed stdin bytes become parsed messages,
-which the dispatcher turns into framed responses).
+One server implementation serves every target. The byte pipe is the only
+platform-specific piece: hosted stdio (Win32/POSIX), the bare-metal SB0 UART,
+or the SB0 userspace channel syscalls.
 
 ## Project layout
 
 ```
 sls/
-├── build.sig            # native sig_build graph; wires zpm by path
+├── build.sig            # native sig_build graph; consumes @zpm/lsp by path
 ├── build.sig.zon        # manifest — declares the ../zpm path dependency
 ├── scripts/
 │   ├── e2e.ps1          # cross-platform end-to-end LSP session driver
-│   └── build-sb0.sh     # SB0X native image build
+│   ├── build-sb0.ps1    # SB0K bare-metal image build (Windows)
+│   ├── build-sb0.sh     # SB0K bare-metal image build (Linux/CI)
+│   └── sb0-qemu-test.sh # boot the SB0K image under QEMU + drive an LSP session
 └── src/
-    ├── main.sig             # transport loop — the sole I/O site
-    ├── platform/
-    │   ├── stdio.sig         # blocking stdio: Win32 + POSIX backends
-    │   ├── sb0_entry.sig     # SB0 bare-metal reset entry + UART transport
-    │   ├── sb0_uart.sig      # PL011 UART driver (QEMU virt)
-    │   └── sb0k.ld           # SB0K bare-metal image linker script
-    ├── lsp/
-    │   ├── loop.sig         # shared transport loop (generic over the byte pipe)
-    │   ├── message.sig      # Content-Length framing + JSON-RPC parsing
-    │   └── jwrite.sig       # allocator-free JSON writer
-    ├── core/
-    │   ├── document.sig     # fixed-slot document store
-    │   ├── position.sig     # UTF-16 line/character ↔ byte-offset math
-    │   └── symbols.sig      # Sig declaration scanner
-    └── server/
-        └── server.sig       # request dispatch + lifecycle
+    ├── main.sig             # hosted transport entry — the sole hosted I/O site
+    └── platform/
+        ├── stdio.sig        # blocking stdio: Win32 + POSIX backends
+        ├── sb0_entry.sig    # SB0 bare-metal reset entry + UART transport
+        ├── sb0_uart.sig     # PL011 UART driver (QEMU virt)
+        └── sb0k.ld          # SB0K bare-metal image linker script
 ```
+
+The reusable protocol/analysis modules (framing, JSON-RPC, document store,
+position math, symbol scanner, dispatch, loop) now live in `@zpm/lsp` and are
+unit-tested there; sls consumes them and keeps only the transport shells.
 
 ## Design constraints
 
-Every module in `src/` honors the same rules:
+Every module honors the same rules:
 
 - No allocator — fixed arrays, ring buffers, comptime capacities, and
   caller-provided buffers only.
 - No standard-library I/O at runtime — transport is direct OS calls (Win32 on
-  Windows, POSIX `read`/`write` elsewhere).
-- One job per module — the parser does not do I/O; the drawer of bytes does not
-  parse; pure logic lives in `core/`.
-- Every module with logic carries inline `test` blocks, run by `sig build test`.
+  Windows, POSIX `read`/`write` elsewhere, UART/channel syscalls on SB0).
+- One job per module — reusable protocol logic lives in `@zpm/lsp`; sls holds
+  only platform transport.
 
 ## Verification
 

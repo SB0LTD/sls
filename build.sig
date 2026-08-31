@@ -19,17 +19,19 @@ const sig_build = @import("sig_build");
 const builtin = @import("builtin");
 
 // ── Source paths ────────────────────────────────────────────────────────────
-// zpm package library (path dependency → ../zpm)
+// Reusable LSP protocol modules come from the sibling zpm package library
+// (@zpm/lsp) by path dependency — sls no longer keeps local copies. Only the
+// hosted transport entry (main.sig) and platform stdio remain sls-specific.
 const zpm_json = "../zpm/src/core/json.sig";
-// sls-local modules
-const p_document = "src/core/document.sig";
-const p_position = "src/core/position.sig";
-const p_symbols = "src/core/symbols.sig";
-const p_jwrite = "src/lsp/jwrite.sig";
-const p_message = "src/lsp/message.sig";
-const p_loop = "src/lsp/loop.sig";
+const p_document = "../zpm/src/lsp/document.sig";
+const p_position = "../zpm/src/lsp/position.sig";
+const p_symbols = "../zpm/src/lsp/symbols.sig";
+const p_jwrite = "../zpm/src/lsp/jwrite.sig";
+const p_message = "../zpm/src/lsp/message.sig";
+const p_loop = "../zpm/src/lsp/loop.sig";
+const p_server = "../zpm/src/lsp/server.sig";
+// sls-specific
 const p_stdio = "src/platform/stdio.sig";
-const p_server = "src/server/server.sig";
 
 fn noopStep(ctx: *sig_build.Step_Context) sig_build.SigError!void {
     _ = ctx;
@@ -45,22 +47,7 @@ fn importEntry(name: []const u8, path: []const u8) sig_build.Import_Entry {
     return entry;
 }
 
-// ── Import sets (each includes the transitive closure it needs) ──────────────
-const no_imports = [_]sig_build.Import_Entry{};
-
-const message_imports = [_]sig_build.Import_Entry{
-    importEntry("json", zpm_json),
-};
-
-const server_imports = [_]sig_build.Import_Entry{
-    importEntry("json", zpm_json),
-    importEntry("message", p_message),
-    importEntry("jwrite", p_jwrite),
-    importEntry("document", p_document),
-    importEntry("position", p_position),
-    importEntry("symbols", p_symbols),
-};
-
+// ── Import set: the full transitive closure the app + test root needs. ──
 const app_imports = [_]sig_build.Import_Entry{
     importEntry("json", zpm_json),
     importEntry("message", p_message),
@@ -147,16 +134,10 @@ pub fn build(ctx: *sig_build.Build_Context) !void {
     const run = try ctx.addStep("run", "Build and run the sls language server", &runApp);
     try ctx.addDependency(run, executable);
 
-    // Aggregate test step. Every module with logic contributes its own test
-    // root so failures are isolated per unit and cached independently.
+    // Aggregate test step. The reusable LSP modules are unit-tested in zpm
+    // (@zpm/lsp); sls's own suite exercises the wired-together server through
+    // the hosted entry so the integration against @zpm/lsp is verified here.
     const test_all = try ctx.addStep("test", "Run all sls tests", &noopStep);
-
-    _ = try addTest(ctx, test_all, "test-document", p_document, &no_imports);
-    _ = try addTest(ctx, test_all, "test-position", p_position, &no_imports);
-    _ = try addTest(ctx, test_all, "test-symbols", p_symbols, &no_imports);
-    _ = try addTest(ctx, test_all, "test-jwrite", p_jwrite, &no_imports);
-    _ = try addTest(ctx, test_all, "test-message", p_message, &message_imports);
-    _ = try addTest(ctx, test_all, "test-server", p_server, &server_imports);
     _ = try addTest(ctx, test_all, "test-main", "src/main.sig", &app_imports);
 }
 

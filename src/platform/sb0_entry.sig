@@ -16,7 +16,7 @@ const uart = @import("uart");
 const loop = @import("loop");
 const server_mod = @import("server");
 
-const build_version = "0.0.5";
+const build_version = "0.0.6";
 
 // Linker-script symbols bounding BSS and the top of the boot stack.
 extern var __bss_start: u8;

@@ -4,6 +4,31 @@ All notable changes to sls are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and sls aims to follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.6] - 2026-08-31 — SB0 userspace + @zpm/lsp
+
+### Added
+- **sls runs as a native SB0 userspace process.** Beyond the bare-metal SB0K
+  image (0.0.5), the full LSP server now runs at **EL0 as an SB0X process under
+  the SB0/Nexus kernel**, doing bidirectional stdio over the SB0 `channel`
+  syscalls (`channel_send` / `channel_receive`, `svc #0`). This required
+  implementing the kernel-side byte-stream console path in
+  [nexus](https://github.com/SB0LTD/nexus) (merged) — `channel_read`/
+  `channel_write` trap backends, a PL011 RX path, and a `launchStdio` that
+  delegates a bidirectional console `channel` handle to the process. Verified in
+  CI: the kernel boots headless, launches the sls SB0X image, and a full
+  `initialize → didOpen → documentSymbol → shutdown → exit` session is driven
+  over the channel and asserted.
+
+### Changed
+- **The LSP protocol core moved to [`@zpm/lsp`](https://github.com/SB0LTD/zpm).**
+  The framing, JSON-RPC parsing/emitting, document store, position math, symbol
+  scanner, request dispatch, and transport loop are now reusable zpm modules;
+  sls consumes them by path dependency and keeps only the hosted transport entry
+  and platform stdio. One implementation now serves the hosted binaries, the
+  bare-metal SB0K image, and the SB0 userspace process.
+- The server name/version reported in `initialize` is configured by sls via the
+  new `ServerInfo` on `@zpm/lsp`'s server.
+
 ## [0.0.5] - 2026-08-29 — Runs on SB0
 
 ### Added
@@ -124,6 +149,7 @@ All notable changes to sls are documented here. The format is based on
   zpm by path dependency.
 - MIT licensed, with the upstream ZLS copyright preserved.
 
+[0.0.6]: https://github.com/SB0LTD/sls/releases/tag/v0.0.6
 [0.0.5]: https://github.com/SB0LTD/sls/releases/tag/v0.0.5
 [0.0.4]: https://github.com/SB0LTD/sls/releases/tag/v0.0.4
 [0.0.3]: https://github.com/SB0LTD/sls/releases/tag/v0.0.3
