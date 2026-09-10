@@ -4,6 +4,23 @@ All notable changes to sls are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and sls aims to follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.7] - 2026-09-10 — SB0 documentSymbol fix (Sig 0.5.5)
+
+### Fixed
+- **`documentSymbol` now returns symbols on the bare-metal `aarch64-sb0` image.**
+  Previously the SB0K image accepted `didOpen` and framed every response
+  correctly, yet `documentSymbol` came back empty. The cause was a Sig AArch64
+  back-end miscompile of a runtime-indexed element address into a large,
+  non-power-of-two-sized element type: the document store's `[N]Document` slots
+  (~128 KiB each) were written to the wrong address, so `store.open` silently
+  lost the text and later lookups found nothing. Fixed in Sig 0.5.5; the same
+  image now returns the expected outline under QEMU. No sls source change was
+  required beyond requiring the fixed compiler.
+
+### Changed
+- **Requires Sig `0.5.5` or newer** for the `aarch64-sb0` image (hosted targets
+  still build with any `0.5.x`).
+
 ## [0.0.6] - 2026-08-31 — SB0 userspace + @zpm/lsp
 
 ### Added

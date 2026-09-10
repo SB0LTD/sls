@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/sig-0.4.0-2f6fe0?style=flat-square" alt="Sig 0.4.0" />
+  <img src="https://img.shields.io/badge/sig-0.5.5-2f6fe0?style=flat-square" alt="Sig 0.5.5" />
   <img src="https://img.shields.io/badge/built%20on-zpm-1e40af?style=flat-square" alt="Built on zpm" />
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT" />
   <img src="https://img.shields.io/badge/allocations-zero-111827?style=flat-square" alt="Zero allocations" />
@@ -78,8 +78,13 @@ full Sig semantic analysis and are being layered on incrementally.
 
 ## Requirements
 
-- **Sig `0.4.0`.** sls uses the native `sig_build` build runner; the legacy
-  `std.Build` graph does not compile under 0.4.0's in-process runner.
+- **Sig `0.5.5` or newer.** sls uses the native `sig_build` build runner; the
+  legacy `std.Build` graph does not compile under the in-process runner. Sig
+  `0.5.5` is required for the bare-metal `aarch64-sb0` image: `0.5.4` completes
+  freestanding linking of the soft-float `compiler_rt` and the memory intrinsics
+  the image pulls in, and `0.5.5` fixes a runtime-indexed element-address
+  miscompile that otherwise corrupted the document store (so `documentSymbol`
+  returned empty on SB0). Hosted targets build with any `0.5.x`.
 - **[`zpm`](https://github.com/SB0LTD/zpm) as a sibling checkout.** `build.sig.zon`
   references it as a path dependency (`../zpm`).
 
