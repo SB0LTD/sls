@@ -23,6 +23,7 @@ const builtin = @import("builtin");
 // (@zpm/lsp) by path dependency — sls no longer keeps local copies. Only the
 // hosted transport entry (main.sig) and platform stdio remain sls-specific.
 const zpm_json = "../zpm/src/core/json.sig";
+const zpm_sig_mem = "../zpm/src/core/sig_mem.sig";
 const p_document = "../zpm/src/lsp/document.sig";
 const p_position = "../zpm/src/lsp/position.sig";
 const p_symbols = "../zpm/src/lsp/symbols.sig";
@@ -50,6 +51,7 @@ fn importEntry(name: []const u8, path: []const u8) sig_build.Import_Entry {
 // ── Import set: the full transitive closure the app + test root needs. ──
 const app_imports = [_]sig_build.Import_Entry{
     importEntry("json", zpm_json),
+    importEntry("sig_mem", zpm_sig_mem),
     importEntry("message", p_message),
     importEntry("jwrite", p_jwrite),
     importEntry("document", p_document),
@@ -88,7 +90,14 @@ pub fn build(ctx: *sig_build.Build_Context) !void {
     // Register every module and wire its own imports. The compile/test steps
     // then only need to name their *root* imports; the runner walks each
     // module's import set transitively to emit the full --dep/-M closure.
-    _ = try ctx.addModule("json", zpm_json);
+    _ = try ctx.addModule("sig_mem", zpm_sig_mem);
+
+    // @zpm/core json scans raw bytes via @zpm sig_mem — wire that dependency
+    // so the module's import closure resolves under Sig 0.5.0's strict
+    // per-module import resolution.
+    const json_mod = try ctx.addModule("json", zpm_json);
+    try wire(ctx, json_mod, "sig_mem", zpm_sig_mem);
+
     _ = try ctx.addModule("jwrite", p_jwrite);
     _ = try ctx.addModule("document", p_document);
     _ = try ctx.addModule("position", p_position);

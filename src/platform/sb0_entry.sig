@@ -51,8 +51,10 @@ export fn _start() callconv(.naked) noreturn {
         \\ add  x0, x0, :lo12:__stack_top
         \\ mov  sp, x0
         \\ // Enable FP/SIMD (CPACR_EL1.FPEN = 0b11) so vectorized code from the
-        \\ // optimizer does not trap on bare metal.
-        \\ mov  x1, #(3 << 20)
+        \\ // optimizer does not trap on bare metal. 3 << 20 == 0x30 << 16;
+        \\ // materialized with movz (a plain move-immediate) so the self-hosted
+        \\ // SB0 assembler does not need to evaluate a shift expression.
+        \\ movz x1, #0x30, lsl #16
         \\ msr  cpacr_el1, x1
         \\ isb
         \\ bl   %[main]
