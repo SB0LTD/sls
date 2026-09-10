@@ -39,7 +39,8 @@ sig build-exe \
   -fno-stack-check -fno-stack-protector -fno-unwind-tables -fstrip -ffunction-sections \
   --script "$LD" \
   --dep uart --dep loop --dep server -Mroot="$HERE/src/platform/sb0_entry.sig" \
-  -Mjson="$ZPM/json.sig" \
+  -Msig_mem="$ZPM/sig_mem.sig" \
+  --dep sig_mem -Mjson="$ZPM/json.sig" \
   -Mjwrite="$ZLSP/jwrite.sig" \
   -Mdocument="$ZLSP/document.sig" \
   -Mposition="$ZLSP/position.sig" \
