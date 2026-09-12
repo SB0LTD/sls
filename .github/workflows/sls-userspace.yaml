@@ -1,0 +1,114 @@
+name: sls userspace (Nexus kernel + QEMU)
+
+# Proves sls runs as a native SB0X userspace process on the generic SB0/Nexus
+# kernel — the proper userspace path, not a bare-metal SB0K probe.
+#
+# It builds sls.sb0x here (sls owns the app), fetches the GENERIC Nexus kernel +
+# the reusable disk/boot harness from Nexus's latest release, stages sls.sb0x
+# onto a FAT disk (APP.SBX + APP.MFT profile=stdio), boots the kernel with that
+# disk on virtio-blk, drives a framed LSP session over the console channel, and
+# asserts the LSP responses. Nexus embeds nothing about sls; the app arrives at
+# runtime on the disk.
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "src/platform/sb0_sls_app.sig"
+      - "scripts/build-sls-sb0x.sh"
+      - ".github/workflows/sls-userspace.yaml"
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: sls-userspace-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sls-qemu:
+    name: Build sls.sb0x and run on Nexus under QEMU
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout sls
+        uses: actions/checkout@v4
+        with:
+          path: sls
+
+      - name: Checkout zpm (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: SB0LTD/zpm
+          path: zpm
+
+      - name: Install toolchain (QEMU + FAT tools)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm xz-utils curl dosfstools mtools
+          qemu-system-aarch64 --version | head -1
+
+      - name: Install latest Sig
+        run: |
+          set -euo pipefail
+          URL="https://github.com/SB0LTD/sig/releases/latest/download/sig-x86_64-linux.tar.xz"
+          curl -fSL "$URL" -o sig.tar.xz
+          mkdir -p sig-dist && tar -xf sig.tar.xz -C sig-dist
+          SIG_BIN="$(find "$PWD/sig-dist" -type f -name sig | head -n1)"
+          chmod +x "$SIG_BIN"
+          echo "$(dirname "$SIG_BIN")" >> "$GITHUB_PATH"
+          "$SIG_BIN" version
+
+      - name: Build sls.sb0x (native SB0X userspace image)
+        working-directory: sls
+        run: bash scripts/build-sls-sb0x.sh sig-out/bin/sls.sb0x
+
+      - name: Fetch the generic Nexus kernel + harness (latest release)
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/SB0LTD/nexus/releases/latest/download"
+          curl -fSL "$BASE/sb0s-kernel"      -o sb0s-kernel
+          curl -fSL "$BASE/make-app-disk.sh" -o make-app-disk.sh
+          curl -fSL "$BASE/test-app-qemu.sh" -o test-app-qemu.sh
+          chmod +x make-app-disk.sh test-app-qemu.sh
+          test -s sb0s-kernel
+
+      - name: Assemble sls app disk (profile=stdio)
+        run: |
+          set -euo pipefail
+          bash make-app-disk.sh \
+            sls/sig-out/bin/sls.sb0x sls stdio \
+            sls-disk.img 64
+
+      - name: Build the framed LSP session to feed over the channel
+        run: |
+          set -euo pipefail
+          frame() { printf 'Content-Length: %s\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"; }
+          SRC='const std = @import(\"std\");\npub fn main() void {}\npub const Point = struct { x: i32 };'
+          {
+            frame '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+            frame '{"jsonrpc":"2.0","method":"initialized"}'
+            frame "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///d.sig\",\"version\":1,\"text\":\"$SRC\"}}}"
+            frame '{"jsonrpc":"2.0","id":2,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"file:///d.sig"}}}'
+            frame '{"jsonrpc":"2.0","id":3,"method":"shutdown"}'
+            frame '{"jsonrpc":"2.0","method":"exit"}'
+          } > lsp-session.bin
+
+      - name: Boot Nexus + sls disk, drive LSP, assert responses
+        run: |
+          set -euo pipefail
+          bash test-app-qemu.sh \
+            --kernel sb0s-kernel \
+            --disk sls-disk.img \
+            --profile stdio \
+            --stdin-file lsp-session.bin \
+            -- \
+            "app-loader: app 'sls' ready" \
+            "SLS-READY" \
+            '"documentSymbolProvider":true' \
+            '"name":"sls"' \
+            '"name":"main"' \
+            '"name":"Point"' \
+            '"result":null' \
+            "[sb0] process exit code=0x0"
