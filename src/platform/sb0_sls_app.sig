@@ -39,7 +39,11 @@ const CONSOLE_HANDLE: u64 = 1;
 // trap is a file-scope global-assembly function with the C calling convention:
 // args arrive in x0.. per AAPCS; we move them into the SB0 ABI registers
 // (x8=opcode, x0..x2=args), `svc #0`, and store x0/x1 results through the
-// caller-provided out pointer.
+// caller-provided out pointer. The out pointer (5th C arg, x4) is stashed into
+// the scratch register x9 BEFORE the trap and the results are stored through
+// x9 — mirroring the canonical zpm/icy SB0 trap stubs. This keeps the store
+// base off the syscall's input-argument registers and never depends on a
+// particular argument register surviving the trap.
 const TrapResult = extern struct { value: u64 = 0, status: u64 = 0 };
 
 extern fn slsSb0Trap(op: u64, a0: u64, a1: u64, a2: u64, out: *TrapResult) callconv(.c) void;
@@ -51,13 +55,14 @@ comptime {
             \\.type slsSb0Trap, %function
             \\.p2align 2
             \\slsSb0Trap:
+            \\  mov x9, x4
             \\  mov x8, x0
             \\  mov x0, x1
             \\  mov x1, x2
             \\  mov x2, x3
             \\  svc #0
-            \\  str x0, [x4]
-            \\  str x1, [x4, #8]
+            \\  str x0, [x9]
+            \\  str x1, [x9, #8]
             \\  ret
         );
     }
