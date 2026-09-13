@@ -65,12 +65,24 @@ jobs:
         run: bash scripts/build-sls-sb0x.sh sig-out/bin/sls.sb0x
 
       - name: Fetch the generic Nexus kernel + harness (latest release)
+        # Nexus is a private repo, so its release assets are not reachable by an
+        # unauthenticated download. Use a fine-grained PAT (Contents: Read on
+        # SB0LTD/nexus) stored as the NEXUS_RELEASE_TOKEN secret; `gh release
+        # download` fetches the assets over the authenticated API.
+        env:
+          GH_TOKEN: ${{ secrets.NEXUS_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
-          BASE="https://github.com/SB0LTD/nexus/releases/latest/download"
-          curl -fSL "$BASE/sb0s-kernel"      -o sb0s-kernel
-          curl -fSL "$BASE/make-app-disk.sh" -o make-app-disk.sh
-          curl -fSL "$BASE/test-app-qemu.sh" -o test-app-qemu.sh
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "NEXUS_RELEASE_TOKEN is not set: add a fine-grained PAT with" >&2
+            echo "Contents:Read on SB0LTD/nexus as a repo/org secret." >&2
+            exit 1
+          fi
+          gh release download --repo SB0LTD/nexus \
+            --pattern sb0s-kernel \
+            --pattern make-app-disk.sh \
+            --pattern test-app-qemu.sh \
+            --dir . --clobber
           chmod +x make-app-disk.sh test-app-qemu.sh
           test -s sb0s-kernel
 
