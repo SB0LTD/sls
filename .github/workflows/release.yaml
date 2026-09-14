@@ -120,18 +120,18 @@ jobs:
             echo "::endgroup::"
           done
 
-          # SB0 native — our own OS. A bare-metal SB0K image that boots under
-          # QEMU and runs the full LSP server over the PL011 UART (see
-          # scripts/build-sb0.sh). Packaged as a first-class artifact.
-          echo "::group::build aarch64-sb0 (SB0K native)"
+          # SB0 native — sls as an SB0X userspace image for the generic
+          # SB0/Nexus kernel. Published as a bare `sls.sb0x` (the stable asset
+          # app-disk assembly fetches via releases/latest) AND inside a
+          # documented archive. The sls-userspace workflow boot-verifies it on
+          # the real Nexus kernel; here we build + publish the artifact.
+          echo "::group::build aarch64-sb0 (sls SB0X userspace image)"
           rm -rf sig-out
-          bash scripts/build-sb0.sh "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0k"
-          # Boot the image under QEMU and assert the LSP server responds before
-          # shipping it — a release never publishes an SB0 image that doesn't run.
-          bash scripts/sb0-qemu-test.sh "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0k"
+          bash scripts/build-sls-sb0x.sh "sig-out/bin/sls.sb0x"
+          cp "sig-out/bin/sls.sb0x" "$OUT/sls.sb0x"
           sb0_stage="sls-$VERSION-aarch64-sb0"
           mkdir -p "$sb0_stage"
-          cp "sig-out/bin/sls-$VERSION-aarch64-sb0.sb0k" "$sb0_stage/sls.sb0k"
+          cp "sig-out/bin/sls.sb0x" "$sb0_stage/sls.sb0x"
           cp README.md LICENSE NOTICE "$sb0_stage/"
           tar -czf "$OUT/$sb0_stage.tar.gz" -C "$sb0_stage" .
           rm -rf "$sb0_stage"
@@ -171,7 +171,7 @@ jobs:
           | Linux aarch64   | \`sls-$VERSION-aarch64-linux.tar.gz\` |
           | macOS x86_64    | \`sls-$VERSION-x86_64-macos.tar.gz\`  |
           | macOS aarch64   | \`sls-$VERSION-aarch64-macos.tar.gz\` |
-          | **SB0 native**  | \`sls-$VERSION-aarch64-sb0.tar.gz\` (bootable SB0K image) |
+          | **SB0 native**  | \`sls.sb0x\` — SB0X userspace image for the generic SB0/Nexus kernel (also in \`sls-$VERSION-aarch64-sb0.tar.gz\`) |
 
           ### Install
           Extract the archive for your platform and point your LSP-capable editor at
