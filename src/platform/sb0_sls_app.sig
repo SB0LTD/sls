@@ -84,6 +84,35 @@ fn dbg(msg: []const u8) void {
     _ = trap3(OP_DEBUG_PRINT, @intFromPtr(msg.ptr), msg.len, 0);
 }
 
+// TEMP diagnostic: print "<label>=0x<hex>\n" over the debug trap so we can see
+// runtime pointer/values in the QEMU log while bringing up sls on SB0.
+fn dbgHex(label: []const u8, value: u64) void {
+    dbg(label);
+    var buf: [19]u8 = undefined;
+    buf[0] = '=';
+    buf[1] = '0';
+    buf[2] = 'x';
+    var v = value;
+    var i: usize = 18;
+    if (v == 0) {
+        buf[3] = '0';
+        buf[4] = '\n';
+        _ = trap3(OP_DEBUG_PRINT, @intFromPtr(&buf[0]), 5, 0);
+        return;
+    }
+    buf[i] = '\n';
+    i -= 1;
+    while (v != 0 and i >= 3) : (i -= 1) {
+        const nib: u8 = @truncate(v & 0xf);
+        buf[i] = if (nib < 10) '0' + nib else 'a' + (nib - 10);
+        v >>= 4;
+    }
+    // Shift the "=0x" prefix to abut the digits.
+    const digits_start = i + 1;
+    _ = trap3(OP_DEBUG_PRINT, @intFromPtr(&buf[0]), 3, 0);
+    _ = trap3(OP_DEBUG_PRINT, @intFromPtr(&buf[digits_start]), 19 - digits_start, 0);
+}
+
 /// I/O backend over the SB0 console channel, satisfying the @zpm/lsp loop's
 /// `read`/`writeAll` interface.
 const ChannelIo = struct {
@@ -122,6 +151,14 @@ var io: ChannelIo = .{};
 
 export fn userMain() callconv(.c) void {
     dbg("SLS-READY: sls language server online, awaiting LSP over channel\n");
+    // TEMP diagnostics: surface the runtime addresses of the static globals and
+    // the loop's key buffers so we can correlate an EL0 fault address.
+    dbgHex("DBG io", @intFromPtr(&io));
+    dbgHex("DBG server_state", @intFromPtr(&server_state));
+    dbgHex("DBG buffers", @intFromPtr(&buffers));
+    dbgHex("DBG buffers.inbound", @intFromPtr(&buffers.inbound[0]));
+    dbgHex("DBG buffers.chunk", @intFromPtr(&buffers.chunk[0]));
+    dbgHex("DBG buffers.outbound", @intFromPtr(&buffers.outbound[0]));
     lsp_loop.run(&io, &server_state, &buffers);
     processExit(0);
 }
